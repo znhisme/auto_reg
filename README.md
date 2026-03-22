@@ -207,10 +207,6 @@ class MyPlatform(BasePlatform):
         ...
 ```
 
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=lxf746/any-auto-register&type=Date)](https://star-history.com/#lxf746/any-auto-register&Date)
-
 ## License
 
 MIT License — 仅供学习研究，禁止商业使用。
