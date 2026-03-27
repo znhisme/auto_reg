@@ -1,207 +1,362 @@
 # Any Auto Register
 
-> ⚠️ **免责声明**：本项目仅供学习和研究使用，不得用于任何商业用途。使用本项目所产生的一切后果由使用者自行承担。
+> ⚠️ 免责声明：本项目仅供学习和研究使用，不得用于任何商业用途。使用本项目所产生的一切后果由使用者自行承担。
 
-多平台账号自动注册与管理系统，支持插件化扩展，内置 Web UI。
+多平台账号自动注册与管理系统，支持插件化扩展，内置 Web UI，并可自动拉起本地 Turnstile Solver。
 
 ## 功能特性
 
-- **多平台支持**：Trae.ai、Tavily、Cursor、Kiro、ChatGPT、OpenBlockLabs，支持自定义插件扩展
-- **多邮箱服务**：MoeMail（自建）、Laoudo、DuckMail、Cloudflare Worker 自建邮箱
-- **多执行模式**：API 协议（无浏览器）、无头浏览器（待实现）、有头浏览器（待实现）（各平台按需支持）
-- **验证码服务**：YesCaptcha、2Captcha、本地 Solver（Camoufox）
-- **代理池管理**：自动轮询、成功率统计、自动禁用失效代理
-- **并发注册**：可配置并发数
-- **实时日志**：SSE 实时推送注册日志到前端
-- **平台扩展操作**：各平台可自定义操作（如 Kiro 账号切换、Trae Pro 升级链接生成）
+- 多平台支持：Trae.ai、Cursor、Kiro、Grok 等
+- 多邮箱服务：MoeMail、Laoudo、DuckMail、Freemail、Cloudflare Worker 自建邮箱
+- 多执行模式：协议模式、无头浏览器、有头浏览器
+- 验证码服务：YesCaptcha、本地 Turnstile Solver（Camoufox）
+- 代理池管理：自动轮询、成功率统计、自动禁用失效代理
+- 并发注册：可配置并发数
+- 实时日志：SSE 实时推送注册日志到前端
 
 ## 技术栈
 
 | 层级 | 技术 |
 |------|------|
-| 后端 | FastAPI + SQLite（SQLModel）|
-| 前端 | React + TypeScript + Vite + TailwindCSS |
-| HTTP | curl_cffi（浏览器指纹伪装）|
+| 后端 | FastAPI + SQLite（SQLModel） |
+| 前端 | React + TypeScript + Vite |
+| HTTP | curl_cffi |
 | 浏览器自动化 | Playwright / Camoufox |
 
-## 快速开始
-
-### 环境要求
+## 环境要求
 
 - Python 3.12+
 - Node.js 18+
-- Conda（推荐）或 Python venv
+- Conda（推荐）
 
-### 安装
+## 推荐环境
 
-#### macOS / Linux
+推荐固定使用 conda 环境名：
 
 ```bash
-# 克隆项目
-git clone <repo_url>
-cd account_manager
+any-auto-register
+```
 
-# 创建 conda 环境
+本项目已经提供 Windows 启动脚本：
+
+- `D:\codemodule\ai\any-auto-register\start_backend.bat`
+- `D:\codemodule\ai\any-auto-register\start_backend.ps1`
+- `D:\codemodule\ai\any-auto-register\stop_backend.bat`
+- `D:\codemodule\ai\any-auto-register\stop_backend.ps1`
+
+它们会强制通过 `any-auto-register` 环境启动后端，避免出现：
+
+- 后端能启动，但 Solver 起不来
+- `ModuleNotFoundError: quart`
+- 前端里 Turnstile Solver 一直显示“未运行”
+
+---
+
+## 安装
+
+### 1. 创建 conda 环境
+
+```bash
 conda create -n any-auto-register python=3.12 -y
 conda activate any-auto-register
+```
 
-# 安装后端依赖
+### 2. 安装后端依赖
+
+```bash
 pip install -r requirements.txt
+```
 
-# 构建前端
+### 3. 安装浏览器依赖
+
+```bash
+python -m playwright install chromium
+python -m camoufox fetch
+```
+
+### 4. 安装并构建前端
+
+```bash
 cd frontend
 npm install
 npm run build
 cd ..
 ```
 
-#### Windows
+构建完成后，前端静态文件会输出到：
+
+```text
+D:\codemodule\ai\any-auto-register\static
+```
+
+---
+
+## 启动方式
+
+### Windows 推荐启动方式
+
+#### PowerShell
+
+```powershell
+.\start_backend.ps1
+```
+
+#### CMD
 
 ```bat
-:: 克隆项目
-git clone <repo_url>
-cd account_manager
-
-:: 创建 conda 环境
-conda create -n any-auto-register python=3.12 -y
-conda activate any-auto-register
-
-:: 安装后端依赖
-pip install -r requirements.txt
-
-:: 构建前端
-cd frontend
-npm install
-npm run build
-cd ..
+start_backend.bat
 ```
 
-### 安装浏览器（可选，无头/有头浏览器模式需要）
+默认会使用：
 
-```bash
-# Playwright 浏览器
-python3 -m playwright install chromium
+- conda 环境：`any-auto-register`
+- 服务地址：`http://localhost:8000`
 
-# Camoufox（用于本地 Turnstile Solver）
-python3 -m camoufox fetch
-```
-
-### 启动
-
-确保已激活 conda 环境：
+### 手动启动方式
 
 ```bash
 conda activate any-auto-register
-python -m uvicorn main:app --port 8000
+python main.py
 ```
 
-浏览器访问 `http://localhost:5173`
+### 启动后访问
 
-### 开发模式（前端热更新）
+如果你已经执行过 `npm run build`，直接访问：
+
+```text
+http://localhost:8000
+```
+
+> 注意：生产/本地构建模式下，前端由 FastAPI 直接托管，访问的是 `8000`，不是 `5173`。
+
+### 停止后端
+
+#### PowerShell
+
+```powershell
+.\stop_backend.ps1
+```
+
+#### CMD
+
+```bat
+stop_backend.bat
+```
+
+默认会停止：
+
+- 后端端口：`8000`
+- Solver 端口：`8889`
+
+---
+
+## 前端开发模式
+
+适合改 React 页面时使用。
+
+### 终端 1：启动后端
+
+```powershell
+.\start_backend.ps1
+```
+
+### 终端 2：启动 Vite
 
 ```bash
 cd frontend
 npm run dev
-# 访问 http://localhost:5173
 ```
+
+然后访问：
+
+```text
+http://localhost:5173
+```
+
+Vite 会把 `/api` 代理到本地后端 `http://localhost:8000`。
+
+---
+
+## Turnstile Solver 说明
+
+### 自动启动
+
+本地 Turnstile Solver 会在 FastAPI 后端启动时自动拉起。
+
+默认地址：
+
+```text
+http://localhost:8889
+```
+
+前端“全局配置 → 验证码 → Turnstile Solver”显示的是 **后端检测结果**，因此：
+
+- 后端没启动 → 前端会显示“未运行”
+- 后端启动了，但不是在正确 conda 环境里 → Solver 可能启动失败
+
+### 手动启动 Solver
+
+```bash
+conda activate any-auto-register
+python services/turnstile_solver/start.py --browser_type camoufox --port 8889
+```
+
+### Solver 日志
+
+如果 Solver 启动失败，可查看：
+
+```text
+D:\codemodule\ai\any-auto-register\services\turnstile_solver\solver.log
+```
+
+---
+
+## 常见问题排查
+
+### 1. 前端里 Turnstile Solver 显示“未运行”
+
+先检查后端是否启动：
+
+```bash
+curl http://localhost:8000/api/solver/status
+```
+
+正常结果示例：
+
+```json
+{"running":true}
+```
+
+如果 `8000` 端口都访问不到，说明是后端没启动，不是 Solver 本身的问题。
+
+### 2. 出现 `ModuleNotFoundError: quart`
+
+说明你当前启动后端的 Python 不是 `any-auto-register` 环境。
+
+请改用：
+
+```powershell
+.\start_backend.ps1
+```
+
+或：
+
+```bat
+start_backend.bat
+```
+
+### 3. 如何确认当前 Python 是否正确
+
+```bash
+python -c "import sys; print(sys.executable)"
+```
+
+应当类似于：
+
+```text
+D:\miniconda\conda3\envs\any-auto-register\python.exe
+```
+
+### 4. Solver 能打开，但状态还是不对
+
+检查这两个地址：
+
+```text
+http://localhost:8000/api/solver/status
+http://localhost:8889/
+```
+
+只要第二个能开、但第一个不通，问题就在后端，不在 Solver。
+
+### 5. 端口被占用
+
+如果启动时报 `WinError 10048`，先执行：
+
+```powershell
+.\stop_backend.ps1
+```
+
+然后重新启动：
+
+```powershell
+.\start_backend.ps1
+```
+
+---
 
 ## 邮箱服务配置
 
-注册时需要选择一种邮箱服务用于接收验证码。
+### MoeMail
 
-### MoeMail（推荐）
-
-基于开源项目 [cloudflare_temp_email](https://github.com/dreamhunter2333/cloudflare_temp_email) 自建的临时邮箱服务，无需配置任何参数，系统自动注册临时账号并生成邮箱。
-
-在注册页选择 **MoeMail**，填写你部署的实例地址（默认使用公共实例）。
+推荐默认使用，系统会自动注册临时账号并生成邮箱。
 
 ### Laoudo
 
-使用固定的自有域名邮箱，稳定性最高，适合长期使用。
+适合固定邮箱场景。
 
 | 参数 | 说明 |
 |------|------|
-| 邮箱地址 | 完整邮箱地址，如 `user@example.com` |
-| Account ID | 邮箱账号 ID（在 Laoudo 面板查看）|
-| JWT Token | 登录后从浏览器 Cookie 或接口获取的认证 Token |
+| 邮箱地址 | 完整邮箱地址 |
+| Account ID | 邮箱账号 ID |
+| JWT Token | 登录后的认证令牌 |
 
 ### Cloudflare Worker 自建邮箱
 
-基于 [cloudflare_temp_email](https://github.com/dreamhunter2333/cloudflare_temp_email) 自行部署的邮箱服务，完全自主可控。
-
-**部署步骤**：参考项目文档，部署 Cloudflare Worker + D1 数据库 + Email Routing。
-
 | 参数 | 说明 |
 |------|------|
-| API URL | Worker 的后端 API 地址，如 `https://api.your-domain.com` |
-| Admin Token | 管理员密码，在 Worker 环境变量 `ADMIN_PASSWORDS` 中配置 |
-| 域名 | 收件邮箱的域名，如 `your-domain.com`（需配置 MX 记录指向 Cloudflare）|
-| Fingerprint | 可选，Worker 开启 fingerprint 验证时填写 |
+| API URL | Worker API 地址 |
+| Admin Token | 管理员密码 |
+| 域名 | 收件邮箱域名 |
+| Fingerprint | 可选 |
 
-### DuckMail
+### DuckMail / Freemail
 
-公共临时邮箱服务，无需配置，直接使用。部分地区需要代理。
+适合临时邮箱场景，部分区域可能需要代理。
+
+---
 
 ## 验证码服务配置
 
 | 服务 | 说明 |
 |------|------|
-| YesCaptcha | 需填写 Client Key，在 [yescaptcha.com](https://yescaptcha.com) 注册获取 |
-| 本地 Solver | 使用 Camoufox 本地解码，需先执行 `python3 -m camoufox fetch` |
+| YesCaptcha | 需填写 Client Key |
+| 本地 Solver | 依赖 `camoufox` + `quart`，并要求后端运行在正确 conda 环境中 |
+
+---
 
 ## 项目结构
 
-```
-account_manager/
-├── main.py                 # FastAPI 入口
-├── api/                    # HTTP 接口层
-│   ├── accounts.py         # 账号 CRUD
-│   ├── tasks.py            # 注册任务（SSE 日志）
-│   ├── actions.py          # 平台操作（通用接口）
-│   ├── config.py           # 全局配置持久化
-│   └── proxies.py          # 代理管理
-├── core/                   # 基础设施层
-│   ├── base_platform.py    # 平台基类
-│   ├── base_mailbox.py     # 邮箱服务基类 + 工厂方法
-│   ├── base_captcha.py     # 验证码服务基类
-│   ├── db.py               # 数据模型
-│   ├── proxy_pool.py       # 代理池
-│   ├── registry.py         # 平台插件注册表
-│   └── scheduler.py        # 定时任务
-├── platforms/              # 平台插件层
-│   └── {platform}/
-│       ├── plugin.py       # 平台适配层
-│       ├── core.py         # 注册协议核心逻辑
-│       └── switch.py       # 账号切换逻辑
-├── services/               # 后台服务
-│   ├── solver_manager.py   # Turnstile Solver 进程管理
-│   └── turnstile_solver/   # 本地 Camoufox Solver
-└── frontend/               # React 前端
+```text
+any-auto-register/
+├── main.py
+├── start_backend.bat
+├── start_backend.ps1
+├── stop_backend.bat
+├── stop_backend.ps1
+├── api/
+├── core/
+├── services/
+│   ├── solver_manager.py
+│   └── turnstile_solver/
+├── frontend/
+└── static/
 ```
 
-## 插件开发
+---
 
-添加新平台只需在 `platforms/` 下新建目录，实现 `plugin.py`：
+## Electron 开发说明
 
-```python
-from core.base_platform import BasePlatform, Account, AccountStatus, RegisterConfig
-from core.registry import register
+Electron 开发模式不会自动启动 Python 后端。
 
-@register
-class MyPlatform(BasePlatform):
-    name = "myplatform"
-    display_name = "My Platform"
-    version = "1.0.0"
-    supported_executors = ["protocol"]
+请先在项目根目录启动：
 
-    def register(self, email: str, password: str = None) -> Account:
-        # 用 self.mailbox.get_email() 获取邮箱
-        # 用 self.mailbox.wait_for_code() 收验证码
-        ...
-
-    def check_valid(self, account: Account) -> bool:
-        ...
+```powershell
+.\start_backend.ps1
 ```
+
+然后再运行 Electron。
+
+---
 
 ## License
 

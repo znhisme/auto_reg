@@ -1,5 +1,6 @@
 """account_manager - 多平台账号管理后台"""
 import os
+import sys
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,9 +15,41 @@ from api.proxies import router as proxies_router
 from api.config import router as config_router
 from api.actions import router as actions_router
 
+EXPECTED_CONDA_ENV = os.getenv("APP_CONDA_ENV", "any-auto-register")
+
+
+def _detect_conda_env() -> str:
+    conda_env = os.getenv("CONDA_DEFAULT_ENV")
+    if conda_env:
+        return conda_env
+
+    prefix_parts = os.path.normpath(sys.prefix).split(os.sep)
+    if "envs" in prefix_parts:
+        idx = prefix_parts.index("envs")
+        if idx + 1 < len(prefix_parts):
+            return prefix_parts[idx + 1]
+    return ""
+
+
+def _print_runtime_info() -> None:
+    current_env = _detect_conda_env()
+    print(f"[Runtime] Python: {sys.executable}")
+    print(f"[Runtime] Conda Env: {current_env or '未检测到'}")
+    if current_env and current_env != EXPECTED_CONDA_ENV:
+        print(
+            f"[WARN] 当前环境为 '{current_env}'，推荐使用 '{EXPECTED_CONDA_ENV}' 启动，"
+            "否则 Turnstile Solver 可能因依赖缺失而无法启动。"
+        )
+    elif not current_env:
+        print(
+            f"[WARN] 未检测到 conda 环境，推荐使用 '{EXPECTED_CONDA_ENV}' 启动，"
+            "否则 Turnstile Solver 可能因依赖缺失而无法启动。"
+        )
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _print_runtime_info()
     init_db()
     load_all()
     print("[OK] 数据库初始化完成")
@@ -75,4 +108,8 @@ if os.path.isdir(_static_dir):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", "8000"))
+    reload_enabled = os.getenv("APP_RELOAD", "0").lower() in {"1", "true", "yes"}
+    uvicorn.run("main:app", host=host, port=port, reload=reload_enabled)

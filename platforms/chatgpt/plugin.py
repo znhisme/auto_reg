@@ -37,27 +37,49 @@ class ChatGPTPlatform(BasePlatform):
         log_fn = getattr(self, '_log_fn', print)
         from platforms.chatgpt.register_v2 import RegistrationEngineV2 as RegistrationEngine
         log_fn = getattr(self, '_log_fn', print)
+        max_retries = 3
+        if self.config and getattr(self.config, "extra", None):
+            try:
+                max_retries = int((self.config.extra or {}).get("register_max_retries", 3) or 3)
+            except Exception:
+                max_retries = 3
 
         if self.mailbox:
             # 通用 EmailService 适配器，支持所有 BaseMailbox 实现 (cfworker, duckmail, laoudo 等)
-            mail_acct = self.mailbox.get_email()
-            email = email or mail_acct.email
             _mailbox = self.mailbox
-            _mail_acct = mail_acct
+            _fixed_email = email
 
             class GenericEmailService:
                 service_type = type('ST', (), {'value': 'custom_provider'})()
+                def __init__(self):
+                    self._acct = None
+                    self._email = _fixed_email
                 def create_email(self, config=None):
-                    return {'email': _mail_acct.email, 'service_id': _mail_acct.account_id, 'token': ''}
-                def get_verification_code(self, email=None, email_id=None, timeout=120, pattern=None, otp_sent_at=None):
-                    return _mailbox.wait_for_code(_mail_acct, keyword="", timeout=timeout, otp_sent_at=otp_sent_at)
+                    if self._email and self._acct and _fixed_email:
+                        return {'email': self._email, 'service_id': self._acct.account_id, 'token': ''}
+                    self._acct = _mailbox.get_email()
+                    if not self._email:
+                        self._email = self._acct.email
+                    elif not _fixed_email:
+                        self._email = self._acct.email
+                    return {'email': self._email, 'service_id': self._acct.account_id, 'token': ''}
+                def get_verification_code(self, email=None, email_id=None, timeout=120, pattern=None, otp_sent_at=None, exclude_codes=None):
+                    if not self._acct:
+                        raise RuntimeError("邮箱账户尚未创建，无法获取验证码")
+                    return _mailbox.wait_for_code(
+                        self._acct,
+                        keyword="",
+                        timeout=timeout,
+                        otp_sent_at=otp_sent_at,
+                        exclude_codes=exclude_codes,
+                    )
                 def update_status(self, success, error=None): pass
                 @property
                 def status(self): return None
 
             engine = RegistrationEngine(
                 email_service=GenericEmailService(),
-                proxy_url=proxy, callback_logger=log_fn)
+                proxy_url=proxy, callback_logger=log_fn, max_retries=max_retries)
             engine.email = email
             engine.password = password
         else:
@@ -71,15 +93,21 @@ class ChatGPTPlatform(BasePlatform):
                     acct = _tmail.get_email()
                     self._acct = acct
                     return {'email': acct.email, 'service_id': acct.account_id, 'token': acct.account_id}
-                def get_verification_code(self, email=None, email_id=None, timeout=120, pattern=None, otp_sent_at=None):
-                    return _tmail.wait_for_code(self._acct, keyword="", timeout=timeout, otp_sent_at=otp_sent_at)
+                def get_verification_code(self, email=None, email_id=None, timeout=120, pattern=None, otp_sent_at=None, exclude_codes=None):
+                    return _tmail.wait_for_code(
+                        self._acct,
+                        keyword="",
+                        timeout=timeout,
+                        otp_sent_at=otp_sent_at,
+                        exclude_codes=exclude_codes,
+                    )
                 def update_status(self, success, error=None): pass
                 @property
                 def status(self): return None
 
             engine = RegistrationEngine(
                 email_service=TempMailEmailService(),
-                proxy_url=proxy, callback_logger=log_fn)
+                proxy_url=proxy, callback_logger=log_fn, max_retries=max_retries)
             if email:
                 engine.email = email
                 engine.password = password

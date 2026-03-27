@@ -100,6 +100,32 @@ class ChatGPTClient:
         """输出日志"""
         if self.verbose:
             print(f"  {msg}")
+
+    def _reset_session(self):
+        """重置浏览器指纹与会话，用于绕过偶发的 Cloudflare/SPA 中间页。"""
+        self.device_id = str(uuid.uuid4())
+        self.impersonate, self.chrome_major, self.chrome_full, self.ua, self.sec_ch_ua = _random_chrome_version()
+
+        self.session = curl_requests.Session(impersonate=self.impersonate)
+        if self.proxy:
+            self.session.proxies = {"http": self.proxy, "https": self.proxy}
+
+        self.session.headers.update({
+            "User-Agent": self.ua,
+            "Accept-Language": random.choice([
+                "en-US,en;q=0.9", "en-US,en;q=0.9,zh-CN;q=0.8",
+                "en,en-US;q=0.9", "en-US,en;q=0.8",
+            ]),
+            "sec-ch-ua": self.sec_ch_ua,
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "sec-ch-ua-arch": '"x86"',
+            "sec-ch-ua-bitness": '"64"',
+            "sec-ch-ua-full-version": f'"{self.chrome_full}"',
+            "sec-ch-ua-platform-version": f'"{random.randint(10, 15)}.0.0"',
+        })
+        self.session.cookies.set("oai-did", self.device_id, domain=".openai.com")
+        self.session.cookies.set("oai-did", self.device_id, domain="chatgpt.com")
     
     def visit_homepage(self):
         """访问首页，建立 session"""
@@ -375,13 +401,30 @@ class ChatGPTClient:
         name = f"{first_name} {last_name}"
         self._log(f"完成账号创建: {name}")
         url = f"{self.AUTH}/api/accounts/create_account"
+
+        sentinel_token = build_sentinel_token(
+            self.session,
+            self.device_id,
+            flow="authorize_continue",
+            user_agent=self.ua,
+            sec_ch_ua=self.sec_ch_ua,
+            impersonate=self.impersonate,
+        )
+        if sentinel_token:
+            self._log("create_account: 已生成 sentinel token")
+        else:
+            self._log("create_account: 未生成 sentinel token，降级继续请求")
         
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
             "Referer": f"{self.AUTH}/about-you",
             "Origin": self.AUTH,
+            "oai-device-id": self.device_id,
+            "User-Agent": self.ua,
         }
+        if sentinel_token:
+            headers["openai-sentinel-token"] = sentinel_token
         headers.update(generate_datadog_trace())
         
         payload = {
@@ -421,27 +464,53 @@ class ChatGPTClient:
         """
         from urllib.parse import urlparse
         
-        # 1. 访问首页
-        if not self.visit_homepage():
-            return False, "访问首页失败"
-        
-        # 2. 获取 CSRF token
-        csrf_token = self.get_csrf_token()
-        if not csrf_token:
-            return False, "获取 CSRF token 失败"
-        
-        # 3. 提交邮箱，获取 authorize URL
-        auth_url = self.signin(email, csrf_token)
-        if not auth_url:
-            return False, "提交邮箱失败"
-        
-        # 4. 访问 authorize URL（关键步骤！）
-        final_url = self.authorize(auth_url)
-        if not final_url:
-            return False, "Authorize 失败"
-        
-        final_path = urlparse(final_url).path
-        self._log(f"Authorize → {final_path}")
+        max_auth_attempts = 3
+        final_url = ""
+        final_path = ""
+
+        for auth_attempt in range(max_auth_attempts):
+            if auth_attempt > 0:
+                self._log(f"预授权阶段重试 {auth_attempt + 1}/{max_auth_attempts}...")
+                self._reset_session()
+
+            # 1. 访问首页
+            if not self.visit_homepage():
+                if auth_attempt < max_auth_attempts - 1:
+                    continue
+                return False, "访问首页失败"
+
+            # 2. 获取 CSRF token
+            csrf_token = self.get_csrf_token()
+            if not csrf_token:
+                if auth_attempt < max_auth_attempts - 1:
+                    continue
+                return False, "获取 CSRF token 失败"
+
+            # 3. 提交邮箱，获取 authorize URL
+            auth_url = self.signin(email, csrf_token)
+            if not auth_url:
+                if auth_attempt < max_auth_attempts - 1:
+                    continue
+                return False, "提交邮箱失败"
+
+            # 4. 访问 authorize URL（关键步骤！）
+            final_url = self.authorize(auth_url)
+            if not final_url:
+                if auth_attempt < max_auth_attempts - 1:
+                    continue
+                return False, "Authorize 失败"
+
+            final_path = urlparse(final_url).path
+            self._log(f"Authorize → {final_path}")
+
+            # /api/accounts/authorize 实际上常对应 Cloudflare 403 中间页，不要继续走 authorize_continue。
+            if "api/accounts/authorize" in final_path or final_path == "/error":
+                self._log(f"检测到 Cloudflare/SPA 中间页，准备重试预授权: {final_url[:160]}...")
+                if auth_attempt < max_auth_attempts - 1:
+                    continue
+                return False, f"预授权被拦截: {final_path}"
+
+            break
         
         # 5. 根据最终 URL 判断状态
         need_otp = False
@@ -470,42 +539,6 @@ class ChatGPTClient:
             self._log("账号已完成注册")
             return True, "账号已完成注册"
             
-        elif "api/accounts/authorize" in final_path:
-            self._log("检测到前端 SPA 拦截，执行 authorize_continue 初始化会话...")
-            state = ""
-            if "state=" in final_url:
-                state = final_url.split("state=")[1].split("&")[0]
-            
-            headers_continue = {
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "Referer": final_url,
-                "Origin": self.AUTH,
-                "User-Agent": self.ua,
-            }
-            headers_continue.update(generate_datadog_trace())
-            
-            payload = {"state": state, "flow": "authorize_continue"}
-            r_continue = self.session.post(
-                f"{self.AUTH}/api/accounts/authorize/continue", 
-                json=payload, 
-                headers=headers_continue,
-                timeout=30,
-                allow_redirects=False,
-                impersonate=self.impersonate
-            )
-            
-            if r_continue.status_code == 200:
-                self._log("authorize_continue 成功，准备注册用户...")
-                success, msg = self.register_user(email, password)
-                if not success:
-                    return False, f"注册失败: {msg}"
-                self.send_email_otp()
-                need_otp = True
-            else:
-                self._log(f"authorize_continue 失败: {r_continue.status_code} - {r_continue.text[:100]}")
-                return False, f"authorize_continue 失败: {r_continue.status_code}"
-                
         else:
             self._log(f"未知跳转: {final_url}")
             success, msg = self.register_user(email, password)

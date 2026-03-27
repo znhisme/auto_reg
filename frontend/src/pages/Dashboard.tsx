@@ -1,22 +1,25 @@
 import { useEffect, useState } from 'react'
+import { Card, Row, Col, Statistic, Progress, Tag, Button, Spin } from 'antd'
+import {
+  UserOutlined,
+  CheckCircleOutlined,
+  ClockCircleOutlined,
+  CloseCircleOutlined,
+  ReloadOutlined,
+} from '@ant-design/icons'
 import { apiFetch } from '@/lib/utils'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Users, CheckCircle, Clock, XCircle, RefreshCw } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 
 const PLATFORM_COLORS: Record<string, string> = {
-  trae: 'text-blue-400',
-  tavily: 'text-purple-400',
-  cursor: 'text-emerald-400',
+  trae: '#3b82f6',
+  cursor: '#10b981',
 }
 
-const STATUS_VARIANT: Record<string, any> = {
+const STATUS_COLORS: Record<string, string> = {
   registered: 'default',
   trial: 'success',
   subscribed: 'success',
   expired: 'warning',
-  invalid: 'danger',
+  invalid: 'error',
 }
 
 export default function Dashboard() {
@@ -33,85 +36,117 @@ export default function Dashboard() {
     }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+  }, [])
 
   const statCards = [
-    { label: '总账号数', value: stats?.total ?? '-', icon: Users, color: 'text-[var(--text-accent)]' },
-    { label: '试用中', value: stats?.by_status?.trial ?? 0, icon: Clock, color: 'text-amber-400' },
-    { label: '已订阅', value: stats?.by_status?.subscribed ?? 0, icon: CheckCircle, color: 'text-emerald-400' },
-    { label: '已失效', value: (stats?.by_status?.expired ?? 0) + (stats?.by_status?.invalid ?? 0), icon: XCircle, color: 'text-red-400' },
+    {
+      title: '总账号数',
+      value: stats?.total ?? 0,
+      icon: <UserOutlined style={{ fontSize: 32 }} />,
+      color: '#6366f1',
+    },
+    {
+      title: '试用中',
+      value: stats?.by_status?.trial ?? 0,
+      icon: <ClockCircleOutlined style={{ fontSize: 32 }} />,
+      color: '#f59e0b',
+    },
+    {
+      title: '已订阅',
+      value: stats?.by_status?.subscribed ?? 0,
+      icon: <CheckCircleOutlined style={{ fontSize: 32 }} />,
+      color: '#10b981',
+    },
+    {
+      title: '已失效',
+      value: (stats?.by_status?.expired ?? 0) + (stats?.by_status?.invalid ?? 0),
+      icon: <CloseCircleOutlined style={{ fontSize: 32 }} />,
+      color: '#ef4444',
+    },
   ]
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div style={{ padding: 0 }}>
+      <div style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <h1 className="text-2xl font-bold text-[var(--text-primary)]">仪表盘</h1>
-          <p className="text-[var(--text-muted)] text-sm mt-1">账号总览</p>
+          <h1 style={{ fontSize: 24, fontWeight: 'bold', margin: 0 }}>仪表盘</h1>
+          <p style={{ color: '#7a8ba3', marginTop: 4 }}>账号总览</p>
         </div>
-        <Button variant="outline" size="sm" onClick={load} disabled={loading}>
-          <RefreshCw className={`h-4 w-4 mr-1 ${loading ? 'animate-spin' : ''}`} />
+        <Button icon={<ReloadOutlined spin={loading} />} onClick={load} loading={loading}>
           刷新
         </Button>
       </div>
 
-      {/* 统计卡片 */}
-      <div className="grid grid-cols-4 gap-4">
-        {statCards.map(({ label, value, icon: Icon, color }) => (
-          <Card key={label}>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-[var(--text-muted)]">{label}</p>
-                <p className="text-3xl font-bold text-[var(--text-primary)] mt-1">{value}</p>
+      <Row gutter={[16, 16]}>
+        {statCards.map(({ title, value, icon, color }) => (
+          <Col xs={24} sm={12} lg={6} key={title}>
+            <Card>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Statistic title={title} value={value} />
+                <div style={{ color, opacity: 0.8 }}>{icon}</div>
               </div>
-              <Icon className={`h-8 w-8 ${color} opacity-80`} />
-            </div>
-          </Card>
+            </Card>
+          </Col>
         ))}
-      </div>
+      </Row>
 
-      <div className="grid grid-cols-2 gap-4">
-        {/* 平台分布 */}
-        <Card>
-          <CardHeader><CardTitle>平台分布</CardTitle></CardHeader>
-          <CardContent className="space-y-3">
-            {stats ? Object.entries(stats.by_platform || {}).map(([platform, count]: any) => (
-              <div key={platform} className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className={`text-sm font-medium ${PLATFORM_COLORS[platform] || 'text-[var(--text-secondary)]'}`}>
-                    {platform}
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="w-32 h-2 bg-[var(--bg-hover)] rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-indigo-500 rounded-full"
-                      style={{ width: `${Math.round((count / stats.total) * 100)}%` }}
-                    />
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+        <Col xs={24} lg={12}>
+          <Card title="平台分布">
+            {loading ? (
+              <div style={{ textAlign: 'center', padding: 40 }}>
+                <Spin />
+              </div>
+            ) : stats ? (
+              Object.entries(stats.by_platform || {}).map(([platform, count]: any) => (
+                <div key={platform} style={{ marginBottom: 16 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <Tag color={PLATFORM_COLORS[platform] || 'default'}>{platform}</Tag>
+                    <span>{count}</span>
                   </div>
-                  <span className="text-sm text-[var(--text-muted)] w-8 text-right">{count}</span>
+                  <Progress
+                    percent={stats.total ? Math.round((count / stats.total) * 100) : 0}
+                    strokeColor={PLATFORM_COLORS[platform] || '#6366f1'}
+                    showInfo={false}
+                  />
                 </div>
-              </div>
-            )) : <p className="text-[var(--text-muted)] text-sm">加载中...</p>}
-          </CardContent>
-        </Card>
-
-        {/* 状态分布 */}
-        <Card>
-          <CardHeader><CardTitle>状态分布</CardTitle></CardHeader>
-          <CardContent className="space-y-3">
-            {stats ? Object.entries(stats.by_status || {}).map(([status, count]: any) => (
-              <div key={status} className="flex items-center justify-between">
-                <Badge variant={STATUS_VARIANT[status] || 'secondary'}>{status}</Badge>
-                <span className="text-sm text-[var(--text-muted)]">{count}</span>
-              </div>
-            )) : <p className="text-[var(--text-muted)] text-sm">加载中...</p>}
-            {stats && Object.keys(stats.by_status || {}).length === 0 && (
-              <p className="text-[var(--text-muted)] text-sm">暂无数据</p>
+              ))
+            ) : (
+              <div style={{ textAlign: 'center', color: '#7a8ba3' }}>加载中...</div>
             )}
-          </CardContent>
-        </Card>
-      </div>
+          </Card>
+        </Col>
+
+        <Col xs={24} lg={12}>
+          <Card title="状态分布">
+            {loading ? (
+              <div style={{ textAlign: 'center', padding: 40 }}>
+                <Spin />
+              </div>
+            ) : stats ? (
+              Object.entries(stats.by_status || {}).map(([status, count]: any) => (
+                <div
+                  key={status}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '8px 0',
+                    borderBottom: '1px solid rgba(255,255,255,0.1)',
+                  }}
+                >
+                  <Tag color={STATUS_COLORS[status] || 'default'}>{status}</Tag>
+                  <span>{count}</span>
+                </div>
+              ))
+            ) : (
+              <div style={{ textAlign: 'center', color: '#7a8ba3' }}>加载中...</div>
+            )}
+          </Card>
+        </Col>
+      </Row>
     </div>
   )
 }

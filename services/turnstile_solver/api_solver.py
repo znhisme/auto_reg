@@ -8,8 +8,16 @@ import asyncio
 from typing import Optional, Union
 import argparse
 from quart import Quart, request, jsonify
-from camoufox.async_api import AsyncCamoufox
-from patchright.async_api import async_playwright
+
+try:
+    from camoufox.async_api import AsyncCamoufox
+except ImportError:
+    AsyncCamoufox = None
+
+try:
+    from patchright.async_api import async_playwright
+except ImportError:
+    async_playwright = None
 from db_results import init_db, save_result, load_result, cleanup_old_results
 from browser_configs import browser_config
 from rich.console import Console
@@ -161,8 +169,16 @@ class TurnstileAPIServer:
         camoufox = None
 
         if self.browser_type in ['chromium', 'chrome', 'msedge']:
+            if async_playwright is None:
+                raise RuntimeError(
+                    "当前浏览器模式需要 patchright，但未安装。请执行: pip install patchright"
+                )
             playwright = await async_playwright().start()
         elif self.browser_type == "camoufox":
+            if AsyncCamoufox is None:
+                raise RuntimeError(
+                    "当前浏览器模式需要 camoufox，但未安装。请执行: pip install camoufox && python -m camoufox fetch"
+                )
             camoufox = AsyncCamoufox(headless=self.headless)
 
         browser_configs = []
@@ -1088,8 +1104,8 @@ def parse_args():
     parser.add_argument('--random', action='store_true', help='Use random User-Agent and Sec-CH-UA configuration from pool')
     parser.add_argument('--browser', type=str, help='Specify browser name to use (e.g., chrome, firefox)')
     parser.add_argument('--version', type=str, help='Specify browser version to use (e.g., 139, 141)')
-    parser.add_argument('--host', type=str, default='0.0.0.0', help='Specify the IP address where the API solver runs. (Default: 127.0.0.1)')
-    parser.add_argument('--port', type=str, default=os.getenv('SOLVER_PORT', '5073'), help='Set the port for the API solver to listen on. (Default: SOLVER_PORT env or 5073)')
+    parser.add_argument('--host', type=str, default='0.0.0.0', help='Specify the IP address where the API solver runs. (Default: 0.0.0.0)')
+    parser.add_argument('--port', type=str, default=os.getenv('SOLVER_PORT', '8889'), help='Set the port for the API solver to listen on. (Default: SOLVER_PORT env or 8889)')
     return parser.parse_args()
 
 

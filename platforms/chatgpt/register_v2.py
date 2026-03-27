@@ -26,19 +26,24 @@ from .utils import generate_random_name, generate_random_birthday
 logger = logging.getLogger(__name__)
 
 class EmailServiceAdapter:
-    """包装 V1 的 email_service 使其符合 V2 Client 需要的接口"""
+    """\u5c06 V1 \u7684 email_service \u9002\u914d\u6210 V2 \u6240\u9700\u7684\u63a5\u7801\u63a5\u53e3\u3002"""
     def __init__(self, email_service, email, log_fn):
         self.es = email_service
         self.email = email
         self.log_fn = log_fn
+        self._used_codes = set()
 
-    def wait_for_verification_code(self, email, timeout=60, otp_sent_at=None):
-        # 原版 email_service 提供 get_verification_code(timeout=...)
-        msg = f"正在等待邮箱 {email} 的验证码 ({timeout}s)..."
+    def wait_for_verification_code(self, email, timeout=60, otp_sent_at=None, exclude_codes=None):
+        msg = f"\u6b63\u5728\u7b49\u5f85\u90ae\u7bb1 {email} \u7684\u9a8c\u8bc1\u7801 ({timeout}s)..."
         self.log_fn(msg)
-        code = self.es.get_verification_code(timeout=timeout, otp_sent_at=otp_sent_at)
+        code = self.es.get_verification_code(
+            timeout=timeout,
+            otp_sent_at=otp_sent_at,
+            exclude_codes=exclude_codes or self._used_codes,
+        )
         if code:
-            self.log_fn(f"成功获取验证码: {code}")
+            self._used_codes.add(code)
+            self.log_fn(f"\u6210\u529f\u83b7\u53d6\u9a8c\u8bc1\u7801: {code}")
         return code
 
 class RegistrationEngineV2:
@@ -47,12 +52,14 @@ class RegistrationEngineV2:
         email_service,
         proxy_url: Optional[str] = None,
         callback_logger: Optional[Callable[[str], None]] = None,
-        task_uuid: Optional[str] = None
+        task_uuid: Optional[str] = None,
+        max_retries: int = 3,
     ):
         self.email_service = email_service
         self.proxy_url = proxy_url
         self.callback_logger = callback_logger
         self.task_uuid = task_uuid
+        self.max_retries = max(1, int(max_retries or 1))
         
         self.email = None
         self.password = None
@@ -69,98 +76,141 @@ class RegistrationEngineV2:
         else:
             logger.info(log_message)
 
+    def _should_retry(self, message: str) -> bool:
+        text = str(message or "").lower()
+        retriable_markers = [
+            "oauth",
+            "tls",
+            "ssl",
+            "curl: (35)",
+            "预授权被拦截",
+            "authorize",
+            "registration_disallowed",
+            "http 400",
+            "创建账号失败",
+            "未获取到 authorization code",
+            "consent",
+            "workspace",
+            "organization",
+            "otp",
+            "验证码",
+        ]
+        return any(marker.lower() in text for marker in retriable_markers)
+
     def run(self) -> RegistrationResult:
         result = RegistrationResult(success=False, logs=self.logs)
         try:
-            self._log("=" * 60)
-            self._log("开始注册流程 V2 (OAuth Curl_cffi绕过风控)")
-            self._log("=" * 60)
-
-            # 1. 创建邮箱
-            email_data = self.email_service.create_email()
-            email_addr = self.email or (email_data.get('email') if email_data else None)
-            if not email_addr:
-                result.error_message = "创建邮箱失败"
-                return result
-                
-            result.email = email_addr
-            
-            pwd = self.password or "AAb1234567890!"
-            result.password = pwd
-            
-            # 随机姓名、生日
-            first_name, last_name = generate_random_name()
-            birthdate = generate_random_birthday()
-            
-            self._log(f"邮箱: {email_addr}, 密码: {pwd}")
-            self._log(f"注册信息: {first_name} {last_name}, 生日: {birthdate}")
-            
-            # 使用包装器为底层客户端提供接码服务
-            skymail_adapter = EmailServiceAdapter(self.email_service, email_addr, self._log)
-            
-            # 2. 初始化 V2 客户端
-            chatgpt_client = ChatGPTClient(proxy=self.proxy_url, verbose=False)
-            # 注入日志方法
-            chatgpt_client._log = self._log
-            
-            self._log("开始执行完整注册认证流(OAuth Redirect)...")
-            
-            success, msg = chatgpt_client.register_complete_flow(
-                email_addr, pwd, first_name, last_name, birthdate, skymail_adapter
-            )
-            
-            if not success:
-                result.error_message = f"注册流失败: {msg}"
-                return result
-                
-            self._log("新账号已创建，注册流完成，开始无缝获取 OAuth AccessToken...")
-            # 3. 初始化 OAuth V2 客户端
-            oauth_client = OAuthClient(config={}, proxy=self.proxy_url, verbose=False)
-            oauth_client._log = self._log
-            # **核心黑科技**: 复用同一批 Cookies 免受各种二次风控验证
-            oauth_client.session = chatgpt_client.session  
-            
-            tokens = oauth_client.login_and_get_tokens(
-                email_addr, pwd,
-                chatgpt_client.device_id,
-                chatgpt_client.ua,
-                chatgpt_client.sec_ch_ua,
-                chatgpt_client.impersonate,
-                skymail_adapter
-            )
-            
-            if tokens and tokens.get("access_token"):
-                self._log("Token 换取完成！")
-                result.success = True
-                result.access_token = tokens.get("access_token")
-                result.refresh_token = tokens.get("refresh_token")
-                result.id_token = tokens.get("id_token")
-                result.account_id = "v2_acct_" + chatgpt_client.device_id[:8]
-                
-                # 从认证后的 Cookie 结构体里直接解析 Workspace
-                session_data = oauth_client._decode_oauth_session_cookie()
-                if session_data:
-                    workspaces = session_data.get("workspaces", [])
-                    if workspaces:
-                        result.workspace_id = str((workspaces[0] or {}).get("id") or "")
-                        self._log(f"成功萃取 Workspace ID: {result.workspace_id}")
+            last_error = ""
+            for attempt in range(self.max_retries):
+                try:
+                    if attempt == 0:
+                        self._log("=" * 60)
+                        self._log("开始注册流程 V2 (OAuth Curl_cffi绕过风控)")
+                        self._log("=" * 60)
                     else:
-                        self._log("oai-client-auth-session 中仍无 workspace信息，但这通常是正常情况，重试即可", "warning")
-                        
-                session_cookie = None
-                for cookie in oauth_client.session.cookies.jar:
-                    if cookie.name == "__Secure-next-auth.session-token":
-                        session_cookie = cookie.value
-                        break
-                result.session_token = session_cookie
-                
-                self._log("=" * 60)
-                self._log("注册流程成功结束!")
-                self._log("=" * 60)
-                return result
-            else:
-                result.error_message = "成功创建了账号但获取最终 OAuth Tokens 失败"
-                return result
+                        self._log(f"整流程重试 {attempt + 1}/{self.max_retries} ...")
+                        time.sleep(1)
+
+                    # 1. 创建邮箱
+                    email_data = self.email_service.create_email()
+                    email_addr = self.email or (email_data.get('email') if email_data else None)
+                    if not email_addr:
+                        result.error_message = "创建邮箱失败"
+                        return result
+
+                    result.email = email_addr
+
+                    pwd = self.password or "AAb1234567890!"
+                    result.password = pwd
+
+                    # 随机姓名、生日
+                    first_name, last_name = generate_random_name()
+                    birthdate = generate_random_birthday()
+
+                    self._log(f"邮箱: {email_addr}, 密码: {pwd}")
+                    self._log(f"注册信息: {first_name} {last_name}, 生日: {birthdate}")
+
+                    # 使用包装器为底层客户端提供接码服务
+                    skymail_adapter = EmailServiceAdapter(self.email_service, email_addr, self._log)
+
+                    # 2. 初始化 V2 客户端
+                    chatgpt_client = ChatGPTClient(proxy=self.proxy_url, verbose=False)
+                    chatgpt_client._log = self._log
+
+                    self._log("开始执行完整注册认证流(OAuth Redirect)...")
+
+                    success, msg = chatgpt_client.register_complete_flow(
+                        email_addr, pwd, first_name, last_name, birthdate, skymail_adapter
+                    )
+
+                    if not success:
+                        last_error = f"注册流失败: {msg}"
+                        if attempt < self.max_retries - 1 and self._should_retry(msg):
+                            self._log(f"注册流失败，准备整流程重试: {msg}")
+                            continue
+                        result.error_message = last_error
+                        return result
+
+                    self._log("新账号已创建，注册流完成，开始无缝获取 OAuth AccessToken...")
+                    # 3. 初始化 OAuth V2 客户端
+                    oauth_client = OAuthClient(config={}, proxy=self.proxy_url, verbose=False)
+                    oauth_client._log = self._log
+                    oauth_client.session = chatgpt_client.session
+
+                    tokens = oauth_client.login_and_get_tokens(
+                        email_addr, pwd,
+                        chatgpt_client.device_id,
+                        chatgpt_client.ua,
+                        chatgpt_client.sec_ch_ua,
+                        chatgpt_client.impersonate,
+                        skymail_adapter
+                    )
+
+                    if tokens and tokens.get("access_token"):
+                        self._log("Token 换取完成！")
+                        result.success = True
+                        result.access_token = tokens.get("access_token")
+                        result.refresh_token = tokens.get("refresh_token")
+                        result.id_token = tokens.get("id_token")
+                        result.account_id = "v2_acct_" + chatgpt_client.device_id[:8]
+
+                        # 从认证后的 Cookie 结构体里直接解析 Workspace
+                        session_data = oauth_client._decode_oauth_session_cookie()
+                        if session_data:
+                            workspaces = session_data.get("workspaces", [])
+                            if workspaces:
+                                result.workspace_id = str((workspaces[0] or {}).get("id") or "")
+                                self._log(f"成功萃取 Workspace ID: {result.workspace_id}")
+                            else:
+                                self._log("oai-client-auth-session 中仍无 workspace信息，但这通常是正常情况，重试即可", "warning")
+
+                        session_cookie = None
+                        for cookie in oauth_client.session.cookies.jar:
+                            if cookie.name == "__Secure-next-auth.session-token":
+                                session_cookie = cookie.value
+                                break
+                        result.session_token = session_cookie
+
+                        self._log("=" * 60)
+                        self._log("注册流程成功结束!")
+                        self._log("=" * 60)
+                        return result
+
+                    last_error = "成功创建了账号但获取最终 OAuth Tokens 失败"
+                    if attempt < self.max_retries - 1:
+                        self._log(f"{last_error}，准备整流程重试")
+                        continue
+                    result.error_message = last_error
+                    return result
+                except Exception as attempt_error:
+                    last_error = str(attempt_error)
+                    if attempt < self.max_retries - 1 and self._should_retry(last_error):
+                        self._log(f"本轮出现异常，准备整流程重试: {last_error}")
+                        continue
+                    raise
+
+            result.error_message = last_error or "注册失败"
+            return result
                 
         except Exception as e:
             self._log(f"V2 注册全流程执行异常: {e}", "error")

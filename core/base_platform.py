@@ -108,6 +108,6 @@ class BasePlatform(ABC):
         elif t == "manual":
             return ManualCaptcha()
         elif t == "local_solver":
-            url = self.config.extra.get("solver_url", "http://localhost:8888")
+            url = self.config.extra.get("solver_url", "http://localhost:8889")
             return LocalSolverCaptcha(url)
         raise ValueError(f"未知验证码解决器: {t}")

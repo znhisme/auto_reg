@@ -130,6 +130,8 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
             _mailbox = mailbox.__class__(**mailbox.__dict__) if req.concurrency > 1 else mailbox
             _platform = PlatformCls(config=_config, mailbox=_mailbox)
             _platform._log_fn = lambda msg: _log(task_id, msg)
+            if getattr(_platform, "mailbox", None) is not None:
+                _platform.mailbox._log_fn = _platform._log_fn
             try:
                 with _tasks_lock:
                     _tasks[task_id]["progress"] = f"{i+1}/{req.count}"

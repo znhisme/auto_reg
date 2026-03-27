@@ -20,7 +20,7 @@ function getBackendPath() {
 
 function startBackend() {
   if (isDev) {
-    console.log('[dev] 请手动启动后端: cd .. && uvicorn main:app --port 8000')
+    console.log('[dev] 请先在项目根目录运行 start_backend.bat 或 start_backend.ps1')
     return
   }
 

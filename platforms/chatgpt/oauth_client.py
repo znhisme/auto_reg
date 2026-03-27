@@ -218,6 +218,18 @@ class OAuthClient:
             continue_url = data.get("continue_url", "")
             page_type = data.get("page", {}).get("type", "")
             self._log(f"continue page={page_type or '-'} next={continue_url[:80] if continue_url else '-'}...")
+
+            continue_requires_otp = (
+                page_type == "email_otp_verification"
+                or "email-verification" in (continue_url or "")
+                or "email-otp" in (continue_url or "")
+            )
+            if continue_requires_otp and skymail_client:
+                self._log("authorize/continue 已进入邮箱 OTP 阶段，跳过 password/verify")
+                return self._handle_otp_verification(
+                    email, device_id, user_agent, sec_ch_ua,
+                    impersonate, skymail_client, code_verifier, continue_url, page_type
+                )
             
         except Exception as e:
             self._log(f"提交邮箱异常: {e}")
@@ -439,33 +451,23 @@ class OAuthClient:
     def _oauth_submit_workspace_and_org(self, consent_url, device_id, user_agent, impersonate, max_retries=3):
         """提交 workspace 和 organization 选择（带重试）"""
         session_data = None
-        
-        # 尝试多次解码 cookie
+
         for attempt in range(max_retries):
-            session_data = self._decode_oauth_session_cookie()
+            session_data = self._load_workspace_session_data(
+                consent_url=consent_url,
+                user_agent=user_agent,
+                impersonate=impersonate,
+            )
             if session_data:
                 break
-            
+
             if attempt < max_retries - 1:
-                self._log(f"无法解码 oai-client-auth-session (尝试 {attempt + 1}/{max_retries})")
-                time.sleep(0.3)  # 短暂延迟后重试
-                
-                # 重新访问 consent URL 以确保 cookie 被设置
-                try:
-                    headers = {
-                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                        "User-Agent": user_agent or "Mozilla/5.0",
-                    }
-                    kwargs = {"headers": headers, "allow_redirects": False, "timeout": 30}
-                    if impersonate:
-                        kwargs["impersonate"] = impersonate
-                    self.session.get(consent_url, **kwargs)
-                except Exception:
-                    pass
+                self._log(f"无法获取 consent session 数据 (尝试 {attempt + 1}/{max_retries})")
+                time.sleep(0.3)
             else:
-                self._log("无法解码 oai-client-auth-session")
+                self._log("无法获取 consent session 数据")
                 return None
-        
+
         workspaces = session_data.get("workspaces", [])
         if not workspaces:
             self._log("session 中没有 workspace 信息")
@@ -597,6 +599,142 @@ class OAuthClient:
             self._log(f"workspace/select 异常: {e}")
         
         return None
+
+    def _load_workspace_session_data(self, consent_url, user_agent, impersonate):
+        """优先从 cookie 解码 session，失败时回退到 consent HTML 中提取 workspace 数据。"""
+        session_data = self._decode_oauth_session_cookie()
+        if session_data and session_data.get("workspaces"):
+            return session_data
+
+        html = self._fetch_consent_page_html(consent_url, user_agent, impersonate)
+        if not html:
+            return session_data
+
+        parsed = self._extract_session_data_from_consent_html(html)
+        if parsed and parsed.get("workspaces"):
+            self._log(f"从 consent HTML 提取到 {len(parsed.get('workspaces', []))} 个 workspace")
+            return parsed
+
+        return session_data
+
+    def _fetch_consent_page_html(self, consent_url, user_agent, impersonate):
+        """获取 consent 页 HTML，用于解析 React Router stream 中的 session 数据。"""
+        try:
+            headers = {
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Upgrade-Insecure-Requests": "1",
+                "User-Agent": user_agent or "Mozilla/5.0",
+                "Referer": f"{self.oauth_issuer}/email-verification",
+            }
+            kwargs = {"headers": headers, "allow_redirects": False, "timeout": 30}
+            if impersonate:
+                kwargs["impersonate"] = impersonate
+            r = self.session.get(consent_url, **kwargs)
+            if r.status_code == 200 and "text/html" in (r.headers.get("content-type", "").lower()):
+                return r.text
+        except Exception:
+            pass
+        return ""
+
+    def _extract_session_data_from_consent_html(self, html):
+        """从 consent HTML 的 React Router stream 中提取 workspace session 数据。"""
+        import json
+        import re
+
+        if not html or "workspaces" not in html:
+            return None
+
+        def _first_match(patterns, text):
+            for pattern in patterns:
+                m = re.search(pattern, text, re.S)
+                if m:
+                    return m.group(1)
+            return ""
+
+        def _build_from_text(text):
+            if not text or "workspaces" not in text:
+                return None
+
+            normalized = text.replace('\\"', '"')
+
+            session_id = _first_match(
+                [
+                    r'"session_id","([^"]+)"',
+                    r'"session_id":"([^"]+)"',
+                ],
+                normalized,
+            )
+            client_id = _first_match(
+                [
+                    r'"openai_client_id","([^"]+)"',
+                    r'"openai_client_id":"([^"]+)"',
+                ],
+                normalized,
+            )
+
+            start = normalized.find('"workspaces"')
+            if start < 0:
+                start = normalized.find('workspaces')
+            if start < 0:
+                return None
+
+            end = normalized.find('"openai_client_id"', start)
+            if end < 0:
+                end = normalized.find('openai_client_id', start)
+            if end < 0:
+                end = min(len(normalized), start + 4000)
+            else:
+                end = min(len(normalized), end + 600)
+
+            workspace_chunk = normalized[start:end]
+            ids = re.findall(r'"id"(?:,|:)"([0-9a-fA-F-]{36})"', workspace_chunk)
+            if not ids:
+                return None
+
+            kinds = re.findall(r'"kind"(?:,|:)"([^"]+)"', workspace_chunk)
+            workspaces = []
+            seen = set()
+            for idx, wid in enumerate(ids):
+                if wid in seen:
+                    continue
+                seen.add(wid)
+                item = {"id": wid}
+                if idx < len(kinds):
+                    item["kind"] = kinds[idx]
+                workspaces.append(item)
+
+            if not workspaces:
+                return None
+
+            return {
+                "session_id": session_id,
+                "openai_client_id": client_id,
+                "workspaces": workspaces,
+            }
+
+        candidates = [html]
+
+        for quoted in re.findall(
+            r'streamController\.enqueue\(("(?:\\.|[^"\\])*")\)',
+            html,
+            re.S,
+        ):
+            try:
+                decoded = json.loads(quoted)
+            except Exception:
+                continue
+            if decoded:
+                candidates.append(decoded)
+
+        if '\\"' in html:
+            candidates.append(html.replace('\\"', '"'))
+
+        for candidate in candidates:
+            parsed = _build_from_text(candidate)
+            if parsed and parsed.get("workspaces"):
+                return parsed
+
+        return None
     
     def _decode_oauth_session_cookie(self):
         """解码 oai-client-auth-session cookie"""
@@ -610,8 +748,11 @@ class OAuthClient:
                     if name == "oai-client-auth-session":
                         value = cookie.value if hasattr(cookie, 'value') else self.session.cookies.get(name)
                         if value:
-                            # 解码 base64
-                            decoded = base64.b64decode(value).decode('utf-8')
+                            padded = value + "=" * (-len(value) % 4)
+                            try:
+                                decoded = base64.b64decode(padded).decode('utf-8')
+                            except Exception:
+                                decoded = base64.urlsafe_b64decode(padded).decode('utf-8')
                             data = json.loads(decoded)
                             return data
                 except Exception:
@@ -657,12 +798,9 @@ class OAuthClient:
         return None
     
     def _handle_otp_verification(self, email, device_id, user_agent, sec_ch_ua, impersonate, skymail_client, code_verifier, continue_url, page_type):
-        """处理 OTP 验证流程"""
-        self._log("步骤4: 检测到邮箱 OTP 验证")
-        
-        # 获取已使用的验证码（从 skymail_client 的历史记录中）
-        exclude_codes = getattr(skymail_client, '_used_codes', set())
-        
+        """\u5904\u7406 OAuth \u9636\u6bb5\u7684\u90ae\u7bb1 OTP \u9a8c\u8bc1\uff0c\u5e76\u786e\u4fdd\u53ea\u4f7f\u7528\u672c\u8f6e\u65b0\u9a8c\u8bc1\u7801\u3002"""
+        self._log("\u6b65\u9aa44: \u68c0\u6d4b\u5230\u90ae\u7bb1 OTP \u9a8c\u8bc1")
+
         headers_otp = {
             "Content-Type": "application/json",
             "Accept": "application/json",
@@ -671,147 +809,138 @@ class OAuthClient:
             "oai-device-id": device_id,
             "User-Agent": user_agent or "Mozilla/5.0",
         }
+        if sec_ch_ua:
+            headers_otp["sec-ch-ua"] = sec_ch_ua
         headers_otp.update(generate_datadog_trace())
-        
-        tried_codes = set(exclude_codes)
-        otp_success = False
+
+        if not hasattr(skymail_client, "_used_codes"):
+            skymail_client._used_codes = set()
+
+        tried_codes = set(getattr(skymail_client, "_used_codes", set()))
         otp_deadline = time.time() + 30
-        
+        otp_sent_at = time.time()
+
+        def validate_otp(code):
+            nonlocal continue_url, page_type
+
+            tried_codes.add(code)
+            self._log(f"\u5c1d\u8bd5 OTP: {code}")
+
+            try:
+                kwargs = {
+                    "json": {"code": code},
+                    "headers": headers_otp,
+                    "timeout": 30,
+                    "allow_redirects": False,
+                }
+                if impersonate:
+                    kwargs["impersonate"] = impersonate
+
+                resp_otp = self.session.post(
+                    f"{self.oauth_issuer}/api/accounts/email-otp/validate",
+                    **kwargs,
+                )
+            except Exception as e:
+                self._log(f"email-otp/validate \u5f02\u5e38: {e}")
+                return False
+
+            self._log(f"/email-otp/validate -> {resp_otp.status_code}")
+
+            if resp_otp.status_code != 200:
+                self._log(f"OTP \u65e0\u6548: {resp_otp.text[:160]}")
+                return False
+
+            try:
+                otp_data = resp_otp.json()
+            except Exception:
+                self._log("email-otp/validate \u54cd\u5e94\u4e0d\u662f JSON")
+                return False
+
+            continue_url = otp_data.get("continue_url", "") or continue_url
+            page_type = otp_data.get("page", {}).get("type", "") or page_type
+            self._log(
+                f"OTP \u9a8c\u8bc1\u901a\u8fc7 page={page_type or '-'} next={continue_url[:80] if continue_url else '-'}..."
+            )
+            skymail_client._used_codes.add(code)
+            return True
+
+        otp_success = False
+
         if hasattr(skymail_client, "wait_for_verification_code"):
-            self._log("使用 wait_for_verification_code 进行阻塞式获取新验证码...")
-            wait_time = max(10, int(otp_deadline - time.time()))
-            # 传入 otp_sent_at 过滤旧验证码，减去 45 秒作为安全缓冲
-            code = skymail_client.wait_for_verification_code(email, timeout=wait_time, otp_sent_at=time.time() - 45)
-            if code and code not in tried_codes:
-                tried_codes.add(code)
-                self._log(f"尝试 OTP: {code}")
+            self._log("\u4f7f\u7528 wait_for_verification_code \u8fdb\u884c\u963b\u585e\u5f0f\u83b7\u53d6\u65b0\u9a8c\u8bc1\u7801...")
+            while time.time() < otp_deadline and not otp_success:
+                remaining = max(1, int(otp_deadline - time.time()))
+                wait_time = min(8, remaining)
                 try:
-                    kwargs = {
-                        "json": {"code": code},
-                        "headers": headers_otp,
-                        "timeout": 30,
-                        "allow_redirects": False
-                    }
-                    if impersonate:
-                        kwargs["impersonate"] = impersonate
-                    
-                    resp_otp = self.session.post(
-                        f"{self.oauth_issuer}/api/accounts/email-otp/validate",
-                        **kwargs
+                    code = skymail_client.wait_for_verification_code(
+                        email,
+                        timeout=wait_time,
+                        otp_sent_at=otp_sent_at,
+                        exclude_codes=tried_codes,
                     )
-                    
-                    self._log(f"/email-otp/validate -> {resp_otp.status_code}")
-                    if resp_otp.status_code == 200:
-                        try:
-                            otp_data = resp_otp.json()
-                            continue_url = otp_data.get("continue_url", "") or continue_url
-                            page_type = otp_data.get("page", {}).get("type", "") or page_type
-                            self._log(f"OTP 验证通过 page={page_type or '-'} next={continue_url[:80] if continue_url else '-'}...")
-                            otp_success = True
-                            
-                            # 记录已使用的验证码
-                            if not hasattr(skymail_client, '_used_codes'):
-                                skymail_client._used_codes = set()
-                            skymail_client._used_codes.add(code)
-                        except Exception:
-                            self._log("email-otp/validate 响应解析失败")
-                    else:
-                        self._log(f"OTP 无效: {resp_otp.text[:160]}")
                 except Exception as e:
-                    self._log(f"email-otp/validate 异常: {e}")
-            else:
-                self._log("未能获取到新的OTP验证码。")
+                    self._log(f"\u7b49\u5f85 OTP \u5f02\u5e38: {e}")
+                    code = None
+
+                if not code:
+                    self._log("\u6682\u672a\u6536\u5230\u65b0\u7684 OTP\uff0c\u7ee7\u7eed\u7b49\u5f85...")
+                    continue
+
+                if code in tried_codes:
+                    self._log(f"\u8df3\u8fc7\u5df2\u5c1d\u8bd5\u9a8c\u8bc1\u7801: {code}")
+                    continue
+
+                otp_success = validate_otp(code)
         else:
             while time.time() < otp_deadline and not otp_success:
-                # 获取邮件列表
                 messages = skymail_client.fetch_emails(email) or []
                 candidate_codes = []
-                
+
                 for msg in messages[:12]:
                     content = msg.get("content") or msg.get("text") or ""
                     code = skymail_client.extract_verification_code(content)
                     if code and code not in tried_codes:
                         candidate_codes.append(code)
-                
+
                 if not candidate_codes:
                     elapsed = int(30 - max(0, otp_deadline - time.time()))
-                    self._log(f"OTP 等待中... ({elapsed}s/30s)")
+                    self._log(f"\u7b49\u5f85\u65b0\u7684 OTP... ({elapsed}s/30s)")
                     time.sleep(2)
                     continue
-                
+
                 for otp_code in candidate_codes:
-                    tried_codes.add(otp_code)
-                    self._log(f"尝试 OTP: {otp_code}")
-                    
-                    try:
-                        kwargs = {
-                            "json": {"code": otp_code},
-                            "headers": headers_otp,
-                            "timeout": 30,
-                            "allow_redirects": False
-                        }
-                        if impersonate:
-                            kwargs["impersonate"] = impersonate
-                        
-                        resp_otp = self.session.post(
-                            f"{self.oauth_issuer}/api/accounts/email-otp/validate",
-                            **kwargs
-                        )
-                    except Exception as e:
-                        self._log(f"email-otp/validate 异常: {e}")
-                        continue
-                    
-                    self._log(f"/email-otp/validate -> {resp_otp.status_code}")
-                    
-                    if resp_otp.status_code != 200:
-                        self._log(f"OTP 无效，继续尝试下一条: {resp_otp.text[:160]}")
-                        continue
-                    
-                    try:
-                        otp_data = resp_otp.json()
-                    except Exception:
-                        self._log("email-otp/validate 响应解析失败")
-                        continue
-                    
-                    continue_url = otp_data.get("continue_url", "") or continue_url
-                    page_type = otp_data.get("page", {}).get("type", "") or page_type
-                    self._log(f"OTP 验证通过 page={page_type or '-'} next={continue_url[:80] if continue_url else '-'}...")
-                    otp_success = True
-                    
-                    # 记录已使用的验证码
-                    if not hasattr(skymail_client, '_used_codes'):
-                        skymail_client._used_codes = set()
-                    skymail_client._used_codes.add(otp_code)
-                    
-                    break
-                
+                    if validate_otp(otp_code):
+                        otp_success = True
+                        break
+
                 if not otp_success:
                     time.sleep(2)
-        
+
         if not otp_success:
-            self._log(f"OAuth 阶段 OTP 验证失败，已尝试 {len(tried_codes)} 个验证码")
+            self._log(f"OAuth \u9636\u6bb5 OTP \u9a8c\u8bc1\u5931\u8d25\uff0c\u5df2\u5c1d\u8bd5 {len(tried_codes)} \u4e2a\u9a8c\u8bc1\u7801")
             return None
-        
-        # OTP 验证成功后，继续 consent 流程
+
         code = None
         consent_url = continue_url
-        
+
         if consent_url and consent_url.startswith("/"):
             consent_url = f"{self.oauth_issuer}{consent_url}"
-        
+
         if not consent_url and "consent" in page_type:
             consent_url = f"{self.oauth_issuer}/sign-in-with-chatgpt/codex/consent"
-        
-        # 先检查 URL 中是否已经包含 code
+
         if consent_url:
             code = self._extract_code_from_url(consent_url)
-        
-        # 跟随 continue_url
+
         if not code and consent_url:
-            self._log("步骤5: 跟随 continue_url 提取 code")
-            code, _ = self._oauth_follow_for_code(consent_url, referer=f"{self.oauth_issuer}/email-verification", user_agent=user_agent, impersonate=impersonate)
-        
-        # 检查是否需要 workspace/org 选择
+            self._log("\u6b65\u9aa45: \u8ddf\u968f continue_url \u63d0\u53d6 code")
+            code, _ = self._oauth_follow_for_code(
+                consent_url,
+                referer=f"{self.oauth_issuer}/email-verification",
+                user_agent=user_agent,
+                impersonate=impersonate,
+            )
+
         consent_hint = (
             ("consent" in (consent_url or ""))
             or ("sign-in-with-chatgpt" in (consent_url or ""))
@@ -820,34 +949,36 @@ class OAuthClient:
             or ("consent" in page_type)
             or ("organization" in page_type)
         )
-        
+
         if not code and consent_hint:
             if not consent_url:
                 consent_url = f"{self.oauth_issuer}/sign-in-with-chatgpt/codex/consent"
-            self._log("步骤6: 执行 workspace/org 选择")
+            self._log("\u6b65\u9aa46: \u6267\u884c workspace/org \u9009\u62e9")
             code = self._oauth_submit_workspace_and_org(consent_url, device_id, user_agent, impersonate)
-        
-        # 最后回退
+
         if not code:
             fallback_consent = f"{self.oauth_issuer}/sign-in-with-chatgpt/codex/consent"
-            self._log("步骤6: 回退 consent 路径重试")
+            self._log("\u6b65\u9aa46: \u56de\u9000\u5230 consent \u9875\u9762\u91cd\u8bd5")
             code = self._oauth_submit_workspace_and_org(fallback_consent, device_id, user_agent, impersonate)
             if not code:
-                code, _ = self._oauth_follow_for_code(fallback_consent, referer=f"{self.oauth_issuer}/email-verification", user_agent=user_agent, impersonate=impersonate)
-        
+                code, _ = self._oauth_follow_for_code(
+                    fallback_consent,
+                    referer=f"{self.oauth_issuer}/email-verification",
+                    user_agent=user_agent,
+                    impersonate=impersonate,
+                )
+
         if not code:
-            self._log("未获取到 authorization code")
+            self._log("\u672a\u83b7\u53d6\u5230 authorization code")
             return None
-        
-        self._log(f"获取到 authorization code: {code[:20]}...")
-        
-        # 用 code 换取 tokens
-        self._log("步骤7: POST /oauth/token")
+
+        self._log(f"\u83b7\u53d6\u5230 authorization code: {code[:20]}...")
+        self._log("\u6b65\u9aa47: POST /oauth/token")
         tokens = self._exchange_code_for_tokens(code, code_verifier, user_agent, impersonate)
-        
+
         if tokens:
-            self._log("✅ OAuth 登录成功")
+            self._log("? OAuth \u767b\u5f55\u6210\u529f")
             return tokens
         else:
-            self._log("换取 tokens 失败")
+            self._log("? \u6362\u53d6 tokens \u5931\u8d25")
             return None

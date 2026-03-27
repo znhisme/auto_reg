@@ -12,6 +12,11 @@ class MailboxAccount:
 
 
 class BaseMailbox(ABC):
+    def _log(self, message: str) -> None:
+        log_fn = getattr(self, "_log_fn", None)
+        if callable(log_fn):
+            log_fn(message)
+
     @abstractmethod
     def get_email(self) -> MailboxAccount:
         """获取一个可用邮箱"""
@@ -279,6 +284,7 @@ class TempMailLolMailbox(BaseMailbox):
         import re, time, requests
         seen = set(before_ids or [])
         otp_sent_at = kwargs.get("otp_sent_at")
+        otp_cutoff = float(otp_sent_at) - 2 if otp_sent_at else None
         start = time.time()
         while time.time() - start < timeout:
             try:
@@ -412,9 +418,16 @@ class CFWorkerMailbox(BaseMailbox):
             h["x-fingerprint"] = self.fingerprint
         return h
 
+    def _generate_local_part(self) -> str:
+        import random, string
+        # 避免纯数字开头，提高邮箱格式“像真人”的程度
+        prefix = "".join(random.choices(string.ascii_lowercase, k=6))
+        suffix = "".join(random.choices(string.digits, k=4))
+        return f"{prefix}{suffix}"
+
     def get_email(self) -> MailboxAccount:
-        import requests, random, string
-        name = "".join(random.choices(string.ascii_lowercase + string.digits, k=10))
+        import requests
+        name = self._generate_local_part()
         payload = {"enablePrefix": True, "name": name}
         if self.domain:
             payload["domain"] = self.domain
@@ -446,8 +459,14 @@ class CFWorkerMailbox(BaseMailbox):
 
     def wait_for_code(self, account: MailboxAccount, keyword: str = "",
                       timeout: int = 120, before_ids: set = None, code_pattern: str = None, **kwargs) -> str:
-        import re, time
+        import re
+        import time
+        from datetime import datetime, timezone
+
         seen = set(before_ids or [])
+        exclude_codes = set(kwargs.get("exclude_codes") or [])
+        otp_sent_at = kwargs.get("otp_sent_at")
+        otp_cutoff = float(otp_sent_at) - 2 if otp_sent_at else None
         start = time.time()
         while time.time() - start < timeout:
             try:
@@ -457,11 +476,20 @@ class CFWorkerMailbox(BaseMailbox):
                     if not mid or mid in seen:
                         continue
                     seen.add(mid)
+
+                    created_at = str(mail.get("created_at", "") or "").strip()
+                    if otp_cutoff and created_at:
+                        try:
+                            mail_ts = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
+                            if mail_ts < otp_cutoff:
+                                self._log(f"[CFWorker] \u8df3\u8fc7\u65e7\u90ae\u4ef6 id={mid} created_at={created_at}")
+                                continue
+                        except Exception:
+                            pass
+
                     raw = str(mail.get("raw", ""))
                     subject = str(mail.get("subject", ""))
-                    # 2. 深度解析 Body 内容
                     search_text = f"{subject} {self._decode_raw_content(raw)}".strip()
-                    # 排除干扰 (Email/Timestamp)
                     search_text = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', '', search_text)
                     search_text = re.sub(r'm=\+\d+\.\d+', '', search_text)
                     search_text = re.sub(r'\bt=\d+\b', '', search_text)
@@ -469,12 +497,16 @@ class CFWorkerMailbox(BaseMailbox):
                         continue
 
                     code = self._safe_extract(search_text, code_pattern)
+                    if code and code in exclude_codes:
+                        self._log(f"[CFWorker] \u8df3\u8fc7\u5df2\u7528\u9a8c\u8bc1\u7801 id={mid} created_at={created_at} code={code}")
+                        continue
                     if code:
+                        self._log(f"[CFWorker] \u547d\u4e2d\u65b0\u9a8c\u8bc1\u7801 id={mid} created_at={created_at} code={code}")
                         return code
             except Exception:
                 pass
             time.sleep(3)
-        raise TimeoutError(f"等待验证码超时 ({timeout}s)")
+        raise TimeoutError(f"\u7b49\u5f85\u9a8c\u8bc1\u7801\u8d85\u65f6 ({timeout}s)")
 
 
 class MoeMailMailbox(BaseMailbox):

@@ -1,57 +1,89 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import {
+  Card,
+  Form,
+  Input,
+  Select,
+  Button,
+  Tag,
+  Space,
+  Typography,
+  Descriptions,
+} from 'antd'
+import {
+  PlayCircleOutlined,
+  CheckCircleOutlined,
+  CloseCircleOutlined,
+  LoadingOutlined,
+} from '@ant-design/icons'
 import { apiFetch } from '@/lib/utils'
-import { Button } from '@/components/ui/button'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Play, CheckCircle, XCircle, Loader2 } from 'lucide-react'
+import { getExecutorOptions, normalizeExecutorForPlatform } from '@/lib/registerOptions'
+
+const { Text } = Typography
 
 export default function Register() {
-  const [form, setForm] = useState({
-    platform: 'trae',
-    email: '',
-    password: '',
-    count: 1,
-    proxy: '',
-    executor_type: 'protocol',
-    captcha_solver: 'yescaptcha',
-    mail_provider: 'moemail',
-    laoudo_auth: '',
-    laoudo_email: '',
-    laoudo_account_id: '',
-    cfworker_api_url: '',
-    cfworker_admin_token: '',
-    cfworker_domain: '',
-    cfworker_fingerprint: '',
-    yescaptcha_key: '',
-    solver_url: 'http://localhost:8888',
-  })
+  const [form] = Form.useForm()
   const [task, setTask] = useState<any>(null)
   const [polling, setPolling] = useState(false)
 
-  const set = (k: string, v: any) => setForm(f => ({ ...f, [k]: v }))
+  useEffect(() => {
+    apiFetch('/config').then((cfg) => {
+      const currentPlatform = form.getFieldValue('platform') || 'trae'
+      form.setFieldsValue({
+        executor_type: normalizeExecutorForPlatform(currentPlatform, cfg.default_executor),
+        captcha_solver: cfg.default_captcha_solver || 'yescaptcha',
+        mail_provider: cfg.mail_provider || 'moemail',
+        yescaptcha_key: cfg.yescaptcha_key || '',
+        moemail_api_url: cfg.moemail_api_url || '',
+        laoudo_auth: cfg.laoudo_auth || '',
+        laoudo_email: cfg.laoudo_email || '',
+        laoudo_account_id: cfg.laoudo_account_id || '',
+        duckmail_api_url: cfg.duckmail_api_url || '',
+        duckmail_provider_url: cfg.duckmail_provider_url || '',
+        duckmail_bearer: cfg.duckmail_bearer || '',
+        freemail_api_url: cfg.freemail_api_url || '',
+        freemail_admin_token: cfg.freemail_admin_token || '',
+        freemail_username: cfg.freemail_username || '',
+        freemail_password: cfg.freemail_password || '',
+        cfworker_api_url: cfg.cfworker_api_url || '',
+        cfworker_admin_token: cfg.cfworker_admin_token || '',
+        cfworker_domain: cfg.cfworker_domain || '',
+        cfworker_fingerprint: cfg.cfworker_fingerprint || '',
+      })
+    })
+  }, [form])
 
   const submit = async () => {
+    const values = await form.validateFields()
     const res = await apiFetch('/tasks/register', {
       method: 'POST',
       body: JSON.stringify({
-        platform: form.platform,
-        email: form.email || null,
-        password: form.password || null,
-        count: form.count,
-        proxy: form.proxy || null,
-        executor_type: form.executor_type,
-        captcha_solver: form.captcha_solver,
+        platform: values.platform,
+        email: values.email || null,
+        password: values.password || null,
+        count: values.count,
+        proxy: values.proxy || null,
+        executor_type: values.executor_type,
+        captcha_solver: values.captcha_solver,
         extra: {
-          mail_provider: form.mail_provider,
-          laoudo_auth: form.laoudo_auth,
-          laoudo_email: form.laoudo_email,
-          laoudo_account_id: form.laoudo_account_id,
-          cfworker_api_url: form.cfworker_api_url,
-          cfworker_admin_token: form.cfworker_admin_token,
-          cfworker_domain: form.cfworker_domain,
-          cfworker_fingerprint: form.cfworker_fingerprint,
-          yescaptcha_key: form.yescaptcha_key,
-            solver_url: form.solver_url,
+          mail_provider: values.mail_provider,
+          laoudo_auth: values.laoudo_auth,
+          laoudo_email: values.laoudo_email,
+          laoudo_account_id: values.laoudo_account_id,
+          moemail_api_url: values.moemail_api_url,
+          duckmail_api_url: values.duckmail_api_url,
+          duckmail_provider_url: values.duckmail_provider_url,
+          duckmail_bearer: values.duckmail_bearer,
+          freemail_api_url: values.freemail_api_url,
+          freemail_admin_token: values.freemail_admin_token,
+          freemail_username: values.freemail_username,
+          freemail_password: values.freemail_password,
+          cfworker_api_url: values.cfworker_api_url,
+          cfworker_admin_token: values.cfworker_admin_token,
+          cfworker_domain: values.cfworker_domain,
+          cfworker_fingerprint: values.cfworker_fingerprint,
+          yescaptcha_key: values.yescaptcha_key,
+          solver_url: values.solver_url,
         },
       }),
     })
@@ -67,7 +99,6 @@ export default function Register() {
       if (t.status === 'done' || t.status === 'failed') {
         clearInterval(interval)
         setPolling(false)
-        // 自动打开 cashier_url（Trae Pro 升级链接）
         if (t.cashier_urls && t.cashier_urls.length > 0) {
           t.cashier_urls.forEach((url: string) => window.open(url, '_blank'))
         }
@@ -75,133 +106,172 @@ export default function Register() {
     }, 2000)
   }
 
-  const Input = ({ label, k, type = 'text', placeholder = '' }: any) => (
-    <div>
-      <label className="block text-xs text-[var(--text-muted)] mb-1">{label}</label>
-      <input
-        type={type}
-        value={(form as any)[k]}
-        onChange={e => set(k, type === 'number' ? Number(e.target.value) : e.target.value)}
-        placeholder={placeholder}
-        className="w-full bg-[var(--bg-hover)] border border-[var(--border)] text-[var(--text-primary)] rounded-md px-3 py-2 text-sm focus:outline-none focus:border-indigo-500"
-      />
-    </div>
-  )
+  const mailProvider = Form.useWatch('mail_provider', form)
+  const captchaSolver = Form.useWatch('captcha_solver', form)
+  const platform = Form.useWatch('platform', form)
+  const executorOptions = getExecutorOptions(platform)
 
-  const Select = ({ label, k, options }: any) => (
-    <div>
-      <label className="block text-xs text-[var(--text-muted)] mb-1">{label}</label>
-      <select
-        value={(form as any)[k]}
-        onChange={e => set(k, e.target.value)}
-        className="w-full bg-[var(--bg-hover)] border border-[var(--border)] text-[var(--text-primary)] rounded-md px-3 py-2 text-sm focus:outline-none focus:border-indigo-500"
-      >
-        {options.map(([v, l]: any) => <option key={v} value={v}>{l}</option>)}
-      </select>
-    </div>
-  )
+  useEffect(() => {
+    const currentExecutor = form.getFieldValue('executor_type')
+    const normalizedExecutor = normalizeExecutorForPlatform(platform, currentExecutor)
+    if (currentExecutor !== normalizedExecutor) {
+      form.setFieldValue('executor_type', normalizedExecutor)
+    }
+  }, [form, platform])
 
   return (
-    <div className="space-y-6 max-w-2xl">
-      <div>
-        <h1 className="text-2xl font-bold text-[var(--text-primary)]">注册任务</h1>
-        <p className="text-[var(--text-muted)] text-sm mt-1">创建账号自动注册任务</p>
+    <div style={{ maxWidth: 800 }}>
+      <div style={{ marginBottom: 24 }}>
+        <h1 style={{ fontSize: 24, fontWeight: 'bold', margin: 0 }}>注册任务</h1>
+        <p style={{ color: '#7a8ba3', marginTop: 4 }}>创建账号自动注册任务</p>
       </div>
 
-      <Card>
-        <CardHeader><CardTitle>基本配置</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
-          <Select label="平台" k="platform" options={[['trae','Trae.ai'],['tavily','Tavily'],['cursor','Cursor'],['kiro','Kiro'],['grok','Grok']]} />
-          <Select label="执行器" k="executor_type" options={[['protocol','纯协议'],['headless','无头浏览器'],['headed','有头浏览器']]} />
-          <Select label="验证码" k="captcha_solver" options={[['yescaptcha','YesCaptcha'],['local_solver','本地Solver(Camoufox)'],['manual','手动']]} />
-          <div className="grid grid-cols-2 gap-4">
-            <Input label="批量数量" k="count" type="number" />
-            <Input label="代理 (可选)" k="proxy" placeholder="http://user:pass@host:port" />
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader><CardTitle>邮箱配置</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
-          <Select label="邮箱服务" k="mail_provider" options={[['moemail','MoeMail (sall.cc)'],['laoudo','Laoudo'],['cfworker','CF Worker']]} />
-          {form.mail_provider === 'laoudo' && (<>
-            <Input label="邮箱地址" k="laoudo_email" placeholder="xxx@laoudo.com" />
-            <Input label="Account ID" k="laoudo_account_id" placeholder="563" />
-            <Input label="JWT Token" k="laoudo_auth" placeholder="eyJ..." />
-          </>)}
-          {form.mail_provider === 'cfworker' && (<>
-            <Input label="API URL" k="cfworker_api_url" placeholder="https://apimail.example.com" />
-            <Input label="Admin Token" k="cfworker_admin_token" placeholder="abc123,,,abc" />
-            <Input label="域名" k="cfworker_domain" placeholder="example.com" />
-            <Input label="Fingerprint (可选)" k="cfworker_fingerprint" placeholder="cfb82279f..." />
-          </>)}
-        </CardContent>
-      </Card>
-
-      {form.captcha_solver === 'yescaptcha' && (
-        <Card>
-          <CardHeader><CardTitle>验证码配置</CardTitle></CardHeader>
-          <CardContent>
-            <Input label="YesCaptcha Key" k="yescaptcha_key" />
-          </CardContent>
+      <Form form={form} layout="vertical" onFinish={submit} initialValues={{
+        platform: 'trae',
+        executor_type: 'protocol',
+        captcha_solver: 'yescaptcha',
+        mail_provider: 'moemail',
+        count: 1,
+        solver_url: 'http://localhost:8889',
+      }}>
+        <Card title="基本配置" style={{ marginBottom: 16 }}>
+          <Form.Item name="platform" label="平台" rules={[{ required: true }]}>
+            <Select
+              options={[
+                { value: 'trae', label: 'Trae.ai' },
+                { value: 'cursor', label: 'Cursor' },
+                { value: 'kiro', label: 'Kiro' },
+                { value: 'grok', label: 'Grok' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item name="executor_type" label="执行器" rules={[{ required: true }]}>
+            <Select options={executorOptions} />
+          </Form.Item>
+          <Form.Item name="captcha_solver" label="验证码" rules={[{ required: true }]}>
+            <Select
+              options={[
+                { value: 'yescaptcha', label: 'YesCaptcha' },
+                { value: 'local_solver', label: '本地 Solver (Camoufox)' },
+                { value: 'manual', label: '手动' },
+              ]}
+            />
+          </Form.Item>
+          <Space style={{ width: '100%' }}>
+            <Form.Item name="count" label="批量数量" style={{ flex: 1 }}>
+              <Input type="number" min={1} />
+            </Form.Item>
+            <Form.Item name="proxy" label="代理 (可选)" style={{ flex: 1 }}>
+              <Input placeholder="http://user:pass@host:port" />
+            </Form.Item>
+          </Space>
         </Card>
-      )}
-      {form.captcha_solver === 'local_solver' && (
-        <Card>
-          <CardHeader><CardTitle>本地 Solver 配置</CardTitle></CardHeader>
-          <CardContent className="space-y-3">
-            <Input label="Solver URL" k="solver_url" />
-            <p className="text-xs text-[var(--text-muted)]">启动命令: python services/turnstile_solver/start.py --headless --browser-type camoufox</p>
-          </CardContent>
-        </Card>
-      )}
 
-      <Button onClick={submit} disabled={polling} className="w-full">
-        {polling ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />注册中...</> : <><Play className="h-4 w-4 mr-2" />开始注册</>}
-      </Button>
+        <Card title="邮箱配置" style={{ marginBottom: 16 }}>
+          <Form.Item name="mail_provider" label="邮箱服务" rules={[{ required: true }]}>
+            <Select
+              options={[
+                { value: 'moemail', label: 'MoeMail (sall.cc)' },
+                { value: 'tempmail_lol', label: 'TempMail.lol' },
+                { value: 'duckmail', label: 'DuckMail' },
+                { value: 'freemail', label: 'Freemail' },
+                { value: 'laoudo', label: 'Laoudo' },
+                { value: 'cfworker', label: 'CF Worker' },
+              ]}
+            />
+          </Form.Item>
+          {mailProvider === 'laoudo' && (
+            <>
+              <Form.Item name="laoudo_email" label="邮箱地址">
+                <Input placeholder="xxx@laoudo.com" />
+              </Form.Item>
+              <Form.Item name="laoudo_account_id" label="Account ID">
+                <Input placeholder="563" />
+              </Form.Item>
+              <Form.Item name="laoudo_auth" label="JWT Token">
+                <Input placeholder="eyJ..." />
+              </Form.Item>
+            </>
+          )}
+          {mailProvider === 'cfworker' && (
+            <>
+              <Form.Item name="cfworker_api_url" label="API URL">
+                <Input placeholder="https://apimail.example.com" />
+              </Form.Item>
+              <Form.Item name="cfworker_admin_token" label="Admin Token">
+                <Input placeholder="abc123,,,abc" />
+              </Form.Item>
+              <Form.Item name="cfworker_domain" label="域名">
+                <Input placeholder="example.com" />
+              </Form.Item>
+              <Form.Item name="cfworker_fingerprint" label="Fingerprint (可选)">
+                <Input placeholder="cfb82279f..." />
+              </Form.Item>
+            </>
+          )}
+        </Card>
+
+        {captchaSolver === 'yescaptcha' && (
+          <Card title="验证码配置" style={{ marginBottom: 16 }}>
+            <Form.Item name="yescaptcha_key" label="YesCaptcha Key">
+              <Input />
+            </Form.Item>
+          </Card>
+        )}
+
+        {captchaSolver === 'local_solver' && (
+          <Card title="本地 Solver 配置" style={{ marginBottom: 16 }}>
+            <Form.Item name="solver_url" label="Solver URL">
+              <Input />
+            </Form.Item>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              启动命令: python services/turnstile_solver/start.py --browser_type camoufox --port 8889
+            </Text>
+          </Card>
+        )}
+
+        <Button type="primary" htmlType="submit" block disabled={polling} icon={polling ? <LoadingOutlined /> : <PlayCircleOutlined />}>
+          {polling ? '注册中...' : '开始注册'}
+        </Button>
+      </Form>
 
       {task && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              任务状态
-              <Badge variant={
-                task.status === 'done' ? 'success' :
-                task.status === 'failed' ? 'danger' : 'default'
-              }>{task.status}</Badge>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            <div className="flex justify-between text-[var(--text-muted)]">
-              <span>任务 ID</span><span className="font-mono">{task.id}</span>
+        <Card title={
+          <Space>
+            <span>任务状态</span>
+            <Tag color={
+              task.status === 'done' ? 'success' :
+              task.status === 'failed' ? 'error' : 'processing'
+            }>
+              {task.status}
+            </Tag>
+          </Space>
+        } style={{ marginTop: 16 }}>
+          <Descriptions column={1} size="small">
+            <Descriptions.Item label="任务 ID">
+              <Text copyable style={{ fontFamily: 'monospace' }}>{task.id}</Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="进度">{task.progress}</Descriptions.Item>
+          </Descriptions>
+          {task.success != null && (
+            <div style={{ marginTop: 8, color: '#10b981' }}>
+              <CheckCircleOutlined /> 成功 {task.success} 个
             </div>
-            <div className="flex justify-between text-[var(--text-muted)]">
-              <span>进度</span><span>{task.progress}</span>
+          )}
+          {task.errors?.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              {task.errors.map((e: string, i: number) => (
+                <div key={i} style={{ color: '#ef4444', marginBottom: 4 }}>
+                  <CloseCircleOutlined /> {e}
+                </div>
+              ))}
             </div>
-            {task.success != null && (
-              <div className="flex items-center gap-2 text-emerald-400">
-                <CheckCircle className="h-4 w-4" />
-                成功 {task.success} 个
-              </div>
-            )}
-            {task.errors?.length > 0 && (
-              <div className="space-y-1">
-                {task.errors.map((e: string, i: number) => (
-                  <div key={i} className="flex items-center gap-2 text-red-400">
-                    <XCircle className="h-4 w-4" />
-                    <span className="text-xs">{e}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {task.error && (
-              <div className="flex items-center gap-2 text-red-400">
-                <XCircle className="h-4 w-4" />
-                <span className="text-xs">{task.error}</span>
-              </div>
-            )}
-          </CardContent>
+          )}
+          {task.error && (
+            <div style={{ marginTop: 8, color: '#ef4444' }}>
+              <CloseCircleOutlined /> {task.error}
+            </div>
+          )}
         </Card>
       )}
     </div>
