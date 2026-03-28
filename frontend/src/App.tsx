@@ -32,6 +32,10 @@ function AppContent() {
 
   useEffect(() => {
     document.documentElement.classList.toggle('light', themeMode === 'light')
+    document.documentElement.style.setProperty(
+      '--sider-trigger-border',
+      themeMode === 'light' ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.15)'
+    )
     localStorage.setItem('theme', themeMode)
   }, [themeMode])
 

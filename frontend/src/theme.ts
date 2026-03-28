@@ -15,6 +15,13 @@ const darkTheme = {
     colorBgLayout: '#13151e',
     colorBgSpotlight: 'rgba(99,102,241,0.2)',
   },
+  components: {
+    Layout: {
+      siderBg: '#1c1f2e',
+      triggerBg: '#1c1f2e',
+      triggerColor: '#f1f5f9',
+    },
+  },
   algorithm: theme.darkAlgorithm,
 }
 
@@ -31,6 +38,13 @@ const lightTheme = {
     colorTextSecondary: '#475569',
     colorTextTertiary: '#94a3b8',
     colorBgLayout: '#f8fafc',
+  },
+  components: {
+    Layout: {
+      siderBg: '#ffffff',
+      triggerBg: '#ffffff',
+      triggerColor: '#0f172a',
+    },
   },
   algorithm: theme.defaultAlgorithm,
 }

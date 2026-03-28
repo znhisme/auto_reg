@@ -300,9 +300,17 @@ function SolverStatus() {
   }, [])
 
   return (
-    <Card title="Turnstile Solver" size="small">
-      <Space direction="vertical" style={{ width: '100%' }}>
-        <Space>
+    <Card title="Turnstile Solver" size="small" style={{ marginBottom: 16 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          flexWrap: 'wrap',
+        }}
+      >
+        <Space size={8}>
           {running === null ? (
             <SyncOutlined spin style={{ color: '#7a8ba3' }} />
           ) : running ? (
@@ -310,14 +318,14 @@ function SolverStatus() {
           ) : (
             <CloseCircleOutlined style={{ color: '#ef4444' }} />
           )}
-          <span style={{ color: running ? '#10b981' : '#7a8ba3' }}>
+          <span style={{ color: running ? '#10b981' : '#7a8ba3', fontWeight: 500 }}>
             {running === null ? '检测中' : running ? '运行中' : '未运行'}
           </span>
         </Space>
         <Button size="small" onClick={restartSolver}>
           重启 Solver
         </Button>
-      </Space>
+      </div>
     </Card>
   )
 }
@@ -554,9 +562,6 @@ export default function Settings() {
               ),
             }))}
           />
-          <div style={{ marginTop: 16 }}>
-            <SolverStatus />
-          </div>
         </div>
 
         <div style={{ flex: 1 }}>
@@ -564,6 +569,7 @@ export default function Settings() {
             <IntegrationsPanel />
           ) : (
             <Form form={form} layout="vertical">
+              {activeTab === 'captcha' ? <SolverStatus /> : null}
               {currentTab.sections.map((section) => (
                 <ConfigSection key={section.title} section={section} />
               ))}

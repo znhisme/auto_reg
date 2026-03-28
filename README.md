@@ -50,6 +50,16 @@
 >
 > 因此，进行 **Kiro 相关注册** 时，请务必优先使用 **自建邮箱**，不要使用项目内置临时邮箱。
 
+## 界面预览
+
+### 仪表盘
+
+!\[仪表盘]\(./docs/images/dashboard.png null)
+
+### 全局配置 / 插件管理
+
+!\[全局配置 / 插件管理]\(./docs/images/settings-integrations.png null)
+
 ## 技术栈
 
 | 层级     | 技术                         |
