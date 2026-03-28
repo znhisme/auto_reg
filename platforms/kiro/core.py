@@ -397,7 +397,7 @@ class KiroRegister:
                 continue
         return ""
 
-    def _type_like_human(self, page: Page, selector_or_locator: Union[str, Locator], text: str):
+    def _type_like_human(self, page: Page, selector_or_locator: Union[str, Locator], text: str, clear_first: bool = True):
         if isinstance(selector_or_locator, str):
             el = page.locator(selector_or_locator).first
         else:
@@ -405,6 +405,15 @@ class KiroRegister:
             el = selector_or_locator.first
             
         el.click(delay=random.randint(45, 160))
+        if clear_first:
+            try:
+                el.clear()
+            except Exception:
+                try:
+                    page.keyboard.press("Control+A")
+                    page.keyboard.press("Backspace")
+                except Exception:
+                    pass
         for idx, char in enumerate(text):
             page.keyboard.type(char, delay=random.randint(45, 210))
             if idx > 0 and random.random() < 0.12:
@@ -460,6 +469,33 @@ class KiroRegister:
                 continue
         return ""
 
+    def _get_first_visible_locator(self, candidates) -> Optional[Locator]:
+        for locator in candidates:
+            try:
+                field = locator.first
+                if field.count() > 0 and field.is_visible():
+                    return field
+            except Exception:
+                continue
+        return None
+
+    def _name_input_candidates(self, page: Page):
+        return [
+            page.get_by_label("Name", exact=True),
+            page.get_by_label(re.compile(r"your name", re.I)),
+            page.locator('input[placeholder="Maria José Silva"]'),
+            page.locator('input[autocomplete="name"]'),
+            page.locator('input[name="name"]'),
+        ]
+
+    def _otp_input_candidates(self, page: Page):
+        return [
+            page.get_by_label("Verification code", exact=True),
+            page.locator('input[placeholder*="6-digit" i]'),
+            page.locator('div[data-testid*="code-input"] input'),
+            page.locator('input[name="code"], input[id*="code"]'),
+        ]
+
     def _wait_for_password_step(self, page: Page, timeout_ms: int = 15000) -> Tuple[bool, str]:
         deadline = time.time() + (timeout_ms / 1000)
         password_input = page.locator('input[type="password"]')
@@ -485,14 +521,8 @@ class KiroRegister:
 
         return False, "提交验证码后未进入密码设置页"
 
-    def _wait_for_otp_step(self, page: Page, timeout_ms: int = 18000) -> Tuple[bool, str, Optional[Locator]]:
+    def _wait_for_post_email_step(self, page: Page, timeout_ms: int = 30000) -> Tuple[str, Optional[Locator], str]:
         deadline = time.time() + (timeout_ms / 1000)
-        otp_candidates = [
-            page.get_by_label("Verification code", exact=True),
-            page.locator('input[placeholder*="6-digit" i]'),
-            page.locator('div[data-testid*="code-input"] input'),
-            page.locator('input[name="code"], input[id*="code"]'),
-        ]
         error_patterns = [
             re.compile(r"error processing your request", re.I),
             re.compile(r"couldn't complete your request", re.I),
@@ -501,13 +531,37 @@ class KiroRegister:
         ]
 
         while time.time() < deadline:
-            for locator in otp_candidates:
-                try:
-                    field = locator.first
-                    if field.count() > 0 and field.is_visible():
-                        return True, "", field
-                except Exception:
-                    continue
+            otp_field = self._get_first_visible_locator(self._otp_input_candidates(page))
+            if otp_field:
+                return "otp", otp_field, ""
+
+            name_field = self._get_first_visible_locator(self._name_input_candidates(page))
+            if name_field:
+                return "name", name_field, ""
+
+            error_text = self._get_first_visible_text(page, error_patterns)
+            if not error_text:
+                error_text = self._get_aws_alert_text(page)
+            if error_text:
+                return "error", None, error_text
+
+            self._human_sleep(0.2, 0.6)
+
+        return "timeout", None, "等待姓名或 OTP 输入框超时"
+
+    def _wait_for_otp_step(self, page: Page, timeout_ms: int = 18000) -> Tuple[bool, str, Optional[Locator]]:
+        deadline = time.time() + (timeout_ms / 1000)
+        error_patterns = [
+            re.compile(r"error processing your request", re.I),
+            re.compile(r"couldn't complete your request", re.I),
+            re.compile(r"verify your email", re.I),
+            re.compile(r"invalid verification code", re.I),
+        ]
+
+        while time.time() < deadline:
+            field = self._get_first_visible_locator(self._otp_input_candidates(page))
+            if field:
+                return True, "", field
 
             error_text = self._get_first_visible_text(page, error_patterns)
             if not error_text:
@@ -862,25 +916,27 @@ class KiroRegister:
             self._human_sleep(1.1, 2.4)
             self._solve_captcha_if_exists(page)
 
-            # 2. 填写名字
-            try:
+            # 2. 等待邮箱后的实际下一步（某些 AWS 页面会延迟很久才出现姓名输入框）
+            self.log("2. 等待姓名或 OTP 阶段...")
+            stage, stage_input, stage_error = self._wait_for_post_email_step(page, timeout_ms=30000)
+            if stage == "error":
+                return False, {"error": f"Email 提交后 AWS 返回错误: {stage_error}"}
+            if stage == "timeout":
+                return False, {"error": stage_error}
+
+            otp_input = stage_input if stage == "otp" else None
+            if stage == "name":
                 self.log("2. 填写名字 (Your name)...")
-                # 使用 Playwright 强大的 get_by_label 或者明确的 placeholder
-                # 之前使用 placeholder*="name" 会错误匹配到邮箱的 "userNAME@example.com"导致把名字写进了邮箱里！
-                name_input = page.get_by_label("Name", exact=True)
-                if name_input.count() == 0:
-                    name_input = page.locator('input[placeholder="Maria José Silva"]')
-                
-                name_input.first.wait_for(state="visible", timeout=10000)
-                self._type_like_human(page, name_input, name)
+                self._type_like_human(page, stage_input, name)
                 self._click_primary_button(page)
                 self._human_sleep(1.1, 2.4)
-            except Exception as e:
-                self.log(f"未出现名字输入框或等待超时，尝试跳过: {e}")
 
-            # 3. 收集邮箱验证码
-            self.log("3. 等待触发 OTP...")
-            otp_ready, otp_wait_error, otp_input = self._wait_for_otp_step(page, timeout_ms=18000)
+                self.log("3. 等待触发 OTP...")
+                otp_ready, otp_wait_error, otp_input = self._wait_for_otp_step(page, timeout_ms=30000)
+            else:
+                self.log("2. 当前流程直接进入 OTP，跳过姓名填写")
+                otp_ready, otp_wait_error = True, ""
+
             if not otp_ready:
                 return False, {"error": f"姓名提交后 AWS 返回错误: {otp_wait_error}"}
 
