@@ -485,7 +485,6 @@ class CFWorkerMailbox(BaseMailbox):
                     mid = str(mail.get("id", ""))
                     if not mid or mid in seen:
                         continue
-                    seen.add(mid)
 
                     created_at = str(mail.get("created_at", "") or "").strip()
                     if otp_cutoff and created_at:
@@ -496,6 +495,9 @@ class CFWorkerMailbox(BaseMailbox):
                                 continue
                         except Exception:
                             pass
+
+                    # 仅在通过时间边界筛选后再标记为已处理，避免边界邮件被过早加入 seen。
+                    seen.add(mid)
 
                     raw = str(mail.get("raw", ""))
                     subject = str(mail.get("subject", ""))
