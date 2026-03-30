@@ -92,9 +92,9 @@ def create_mailbox(provider: str, extra: dict = None, proxy: str = None) -> 'Bas
         return TempMailLolMailbox(proxy=proxy)
     elif provider == "duckmail":
         return DuckMailMailbox(
-            api_url=extra.get("duckmail_api_url", "https://www.duckmail.sbs"),
-            provider_url=extra.get("duckmail_provider_url", "https://api.duckmail.sbs"),
-            bearer=extra.get("duckmail_bearer", "kevin273945"),
+            api_url=(extra.get("duckmail_api_url") or "https://www.duckmail.sbs"),
+            provider_url=(extra.get("duckmail_provider_url") or "https://api.duckmail.sbs"),
+            bearer=(extra.get("duckmail_bearer") or "kevin273945"),
             proxy=proxy,
         )
     elif provider == "freemail":
@@ -317,9 +317,9 @@ class DuckMailMailbox(BaseMailbox):
                  provider_url: str = "https://api.duckmail.sbs",
                  bearer: str = "kevin273945",
                  proxy: str = None):
-        self.api = api_url.rstrip("/")
-        self.provider_url = provider_url
-        self.bearer = bearer
+        self.api = (api_url or "https://www.duckmail.sbs").rstrip("/")
+        self.provider_url = provider_url or "https://api.duckmail.sbs"
+        self.bearer = bearer or "kevin273945"
         self.proxy = {"http": proxy, "https": proxy} if proxy else None
         self._token = None
         self._address = None
@@ -418,6 +418,20 @@ class CFWorkerMailbox(BaseMailbox):
             h["x-fingerprint"] = self.fingerprint
         return h
 
+    def _ensure_api_configured(self) -> None:
+        if not self.api:
+            raise RuntimeError("CF Worker API URL 未配置")
+
+    def _read_json(self, response, action: str):
+        try:
+            return response.json()
+        except Exception:
+            body = (response.text or "").strip()
+            snippet = body[:200] if body else "<empty>"
+            raise RuntimeError(
+                f"CF Worker {action} 返回非 JSON 响应: HTTP {response.status_code}, body={snippet}"
+            )
+
     def _generate_local_part(self) -> str:
         import random, string
         # 避免纯数字开头，提高邮箱格式“像真人”的程度
@@ -427,6 +441,7 @@ class CFWorkerMailbox(BaseMailbox):
 
     def get_email(self) -> MailboxAccount:
         import requests
+        self._ensure_api_configured()
         name = self._generate_local_part()
         payload = {"enablePrefix": True, "name": name}
         if self.domain:
@@ -435,19 +450,26 @@ class CFWorkerMailbox(BaseMailbox):
             json=payload, headers=self._headers(),
             proxies=self.proxy, timeout=15)
         print(f"[CFWorker] new_address status={r.status_code} resp={r.text[:200]}")
-        data = r.json()
+        data = self._read_json(r, "new_address")
+        if r.status_code >= 400:
+            raise RuntimeError(f"CF Worker 创建邮箱失败: HTTP {r.status_code}, body={str(data)[:200]}")
         email = data.get("email", data.get("address", ""))
         token = data.get("token", data.get("jwt", ""))
+        if not email:
+            raise RuntimeError(f"CF Worker 创建邮箱失败: 返回缺少 email/address, body={str(data)[:200]}")
         self._token = token
         print(f"[CFWorker] 生成邮箱: {email} token={token[:40] if token else 'NONE'}...")
         return MailboxAccount(email=email, account_id=token)
 
     def _get_mails(self, email: str) -> list:
         import requests
+        self._ensure_api_configured()
         r = requests.get(f"{self.api}/admin/mails",
             params={"limit": 20, "offset": 0, "address": email},
             headers=self._headers(), proxies=self.proxy, timeout=10)
-        data = r.json()
+        data = self._read_json(r, "mails")
+        if r.status_code >= 400:
+            raise RuntimeError(f"CF Worker 拉取邮件失败: HTTP {r.status_code}, body={str(data)[:200]}")
         return data.get("results", data) if isinstance(data, dict) else data
 
     def get_current_ids(self, account: MailboxAccount) -> set:
