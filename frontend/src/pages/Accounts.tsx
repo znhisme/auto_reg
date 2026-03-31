@@ -27,6 +27,7 @@ import {
   UploadOutlined,
   MoreOutlined,
   DeleteOutlined,
+  SyncOutlined,
 } from '@ant-design/icons'
 import { apiFetch, API_BASE } from '@/lib/utils'
 import { normalizeExecutorForPlatform } from '@/lib/registerOptions'
@@ -585,6 +586,7 @@ export default function Accounts() {
   const [taskId, setTaskId] = useState<string | null>(null)
   const [registerLoading, setRegisterLoading] = useState(false)
   const [cpaSyncLoading, setCpaSyncLoading] = useState<'pending' | 'selected' | ''>('')
+  const [statusSyncLoading, setStatusSyncLoading] = useState<'probe_selected' | 'probe_all' | 'remote_selected' | 'remote_all' | ''>('')
 
   useEffect(() => {
     if (platform) setCurrentPlatform(platform)
@@ -801,6 +803,37 @@ export default function Accounts() {
     })
   }
 
+  const showBatchActionResult = (title: string, result: any) => {
+    const lines = (result.items || [])
+      .filter((item: any) => !item.ok)
+      .map((item: any) => `[${item.id || '-'}] ${item.email || '-'}: ${item.message || '失败'}`)
+
+    if (lines.length === 0) return
+
+    Modal.info({
+      title,
+      width: 760,
+      content: (
+        <pre
+          style={{
+            margin: 0,
+            maxHeight: 360,
+            overflow: 'auto',
+            padding: 12,
+            borderRadius: 8,
+            background: 'rgba(127,127,127,0.08)',
+            fontSize: 12,
+            lineHeight: 1.5,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+          }}
+        >
+          {lines.join('\n')}
+        </pre>
+      ),
+    })
+  }
+
   const handleCpaBackfill = async (mode: 'pending' | 'selected') => {
     if (currentPlatform !== 'chatgpt') return
 
@@ -849,6 +882,74 @@ export default function Accounts() {
     } finally {
       setCpaSyncLoading('')
     }
+  }
+
+  const handleBatchStatusSync = async (kind: 'probe' | 'remote', scope: 'selected' | 'all') => {
+    if (currentPlatform !== 'chatgpt') return
+
+    const loadingKey = `${kind}_${scope}` as typeof statusSyncLoading
+    const actionId = kind === 'probe' ? 'probe_local_status' : 'sync_cliproxyapi_status'
+    const actionLabel = kind === 'probe' ? '本地状态同步' : 'CLIProxyAPI 状态同步'
+    const scopeLabel = scope === 'selected' ? '所选账号' : '当前筛选账号'
+
+    const body: Record<string, unknown> = {
+      params: {},
+    }
+
+    if (scope === 'selected') {
+      const accountIds = Array.from(selectedRowKeys)
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 0)
+
+      if (accountIds.length === 0) {
+        message.warning('请先选择要同步的账号')
+        return
+      }
+      body.account_ids = accountIds
+    } else {
+      body.all_filtered = true
+      if (search) body.email = search
+      if (filterStatus) body.status = filterStatus
+    }
+
+    setStatusSyncLoading(loadingKey)
+    try {
+      const result = await apiFetch(`/actions/${currentPlatform}/${actionId}/batch`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      })
+
+      if (!result.total) {
+        message.info('没有可处理的账号')
+      } else if (!result.failed) {
+        message.success(`${scopeLabel}${actionLabel}完成：成功 ${result.success} / ${result.total}`)
+      } else if (!result.success) {
+        message.error(`${scopeLabel}${actionLabel}失败：成功 ${result.success} / ${result.total}`)
+      } else {
+        message.warning(`${scopeLabel}${actionLabel}部分完成：成功 ${result.success} / ${result.total}`)
+      }
+
+      showBatchActionResult(`${scopeLabel}${actionLabel}结果`, result)
+      await load()
+    } catch (e: any) {
+      message.error(`${actionLabel}失败: ${e.message}`)
+    } finally {
+      setStatusSyncLoading('')
+    }
+  }
+
+  const confirmBatchStatusSync = (kind: 'probe' | 'remote', scope: 'selected' | 'all') => {
+    const count = scope === 'selected' ? selectedRowKeys.length : accounts.length
+    const targetLabel = scope === 'selected' ? '所选' : '当前筛选范围内'
+    const actionLabel = kind === 'probe' ? '本地状态' : 'CLIProxyAPI 状态'
+
+    Modal.confirm({
+      title: `确认同步${actionLabel}？`,
+      content: `将对${targetLabel}的 ${count} 个账号执行${actionLabel}同步。`,
+      okText: '开始同步',
+      cancelText: '取消',
+      onOk: () => handleBatchStatusSync(kind, scope),
+    })
   }
 
   const isChatgptPlatform = currentPlatform === 'chatgpt'
@@ -1110,6 +1211,30 @@ export default function Accounts() {
     },
   )
 
+  const statusSyncMenuItems: MenuProps['items'] = [
+    {
+      key: 'probe:selected',
+      label: `同步所选本地状态${selectedRowKeys.length > 0 ? ` (${selectedRowKeys.length})` : ''}`,
+      disabled: selectedRowKeys.length === 0,
+    },
+    {
+      key: 'probe:all',
+      label: `同步当前筛选本地状态 (${total})`,
+      disabled: total === 0,
+    },
+    { type: 'divider' },
+    {
+      key: 'remote:selected',
+      label: `同步所选 CLIProxyAPI 状态${selectedRowKeys.length > 0 ? ` (${selectedRowKeys.length})` : ''}`,
+      disabled: selectedRowKeys.length === 0,
+    },
+    {
+      key: 'remote:all',
+      label: `同步当前筛选 CLIProxyAPI 状态 (${total})`,
+      disabled: total === 0,
+    },
+  ]
+
   return (
     <div>
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
@@ -1139,6 +1264,21 @@ export default function Accounts() {
           )}
         </Space>
         <Space>
+          {currentPlatform === 'chatgpt' && (
+            <Dropdown
+              menu={{
+                items: statusSyncMenuItems,
+                onClick: ({ key }) => {
+                  const [kind, scope] = String(key).split(':') as ['probe' | 'remote', 'selected' | 'all']
+                  confirmBatchStatusSync(kind, scope)
+                },
+              }}
+            >
+              <Button icon={<SyncOutlined />} loading={statusSyncLoading !== ''} disabled={total === 0}>
+                状态同步
+              </Button>
+            </Dropdown>
+          )}
           {currentPlatform === 'chatgpt' && selectedRowKeys.length > 0 && (
             <Popconfirm
               title={`确认上传选中的 ${selectedRowKeys.length} 个账号到 CPA？`}
