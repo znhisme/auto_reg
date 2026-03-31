@@ -146,6 +146,7 @@ class ChatGPTPlatform(BasePlatform):
     def get_platform_actions(self) -> list:
         return [
             {"id": "probe_local_status", "label": "探测本地状态", "params": []},
+            {"id": "sync_cliproxyapi_status", "label": "同步 CLIProxyAPI 状态", "params": []},
             {"id": "refresh_token", "label": "刷新 Token", "params": []},
             {"id": "payment_link", "label": "生成支付链接",
              "params": [
@@ -203,6 +204,27 @@ class ChatGPTPlatform(BasePlatform):
                 },
                 "account_extra_patch": {
                     "chatgpt_local": probe_result,
+                },
+            }
+
+        if action_id == "sync_cliproxyapi_status":
+            from services.cliproxyapi_sync import sync_chatgpt_cliproxyapi_status
+
+            sync_result = sync_chatgpt_cliproxyapi_status(a)
+            summary = (
+                f"远端状态={sync_result.get('status') or 'not_found'}, "
+                f"探测={sync_result.get('remote_state') or 'not_checked'}"
+            )
+            return {
+                "ok": True,
+                "data": {
+                    "message": f"CLIProxyAPI 状态同步完成：{summary}",
+                    "sync": sync_result,
+                },
+                "account_extra_patch": {
+                    "sync_statuses": {
+                        "cliproxyapi": sync_result,
+                    },
                 },
             }
 

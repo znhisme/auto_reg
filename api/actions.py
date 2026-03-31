@@ -15,6 +15,15 @@ class ActionRequest(BaseModel):
     params: dict = {}
 
 
+def _merge_extra_patch(base: dict, patch: dict) -> dict:
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _merge_extra_patch(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
 @router.get("/{platform}")
 def list_actions(platform: str):
     """获取平台支持的操作列表"""
@@ -54,7 +63,7 @@ def execute_action(
         result = instance.execute_action(action_id, account, body.params)
         if result.get("ok") and isinstance(result.get("account_extra_patch"), dict):
             extra = acc_model.get_extra()
-            extra.update(result["account_extra_patch"])
+            _merge_extra_patch(extra, result["account_extra_patch"])
             acc_model.set_extra(extra)
             from datetime import datetime, timezone
             acc_model.updated_at = datetime.now(timezone.utc)

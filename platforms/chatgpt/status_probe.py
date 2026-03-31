@@ -46,14 +46,19 @@ def _extract_auth_info(payload: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
-def _extract_chatgpt_account_id(account: Any) -> str:
+def extract_chatgpt_account_id(account: Any) -> str:
     user_id = str(getattr(account, "user_id", "") or "").strip()
     if user_id:
         return user_id
 
     extra = getattr(account, "extra", {}) or {}
-    id_token = str(extra.get("id_token", "") or "").strip()
-    access_token = str(extra.get("access_token") or getattr(account, "token", "") or "").strip()
+    id_token = str(extra.get("id_token") or getattr(account, "id_token", "") or "").strip()
+    access_token = str(
+        extra.get("access_token")
+        or getattr(account, "access_token", "")
+        or getattr(account, "token", "")
+        or ""
+    ).strip()
 
     id_payload = _decode_jwt_payload(id_token)
     auth_info = _extract_auth_info(id_payload)
@@ -202,7 +207,7 @@ def probe_local_chatgpt_status(account: Any, proxy: Optional[str] = None) -> dic
     access_token = str(extra.get("access_token") or getattr(account, "token", "") or "").strip()
     refresh_token = str(extra.get("refresh_token", "") or "").strip()
     session_token = str(extra.get("session_token", "") or "").strip()
-    account_id = _extract_chatgpt_account_id(account)
+    account_id = extract_chatgpt_account_id(account)
 
     result: dict[str, Any] = {
         "version": 1,

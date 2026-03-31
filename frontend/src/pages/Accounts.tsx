@@ -54,8 +54,9 @@ function normalizeAccount(account: any) {
   const extra = parseExtraJson(account.extra_json)
   const syncStatuses = extra.sync_statuses && typeof extra.sync_statuses === 'object' ? extra.sync_statuses : {}
   const cpaSync = syncStatuses.cpa && typeof syncStatuses.cpa === 'object' ? syncStatuses.cpa : {}
+  const cliproxySync = syncStatuses.cliproxyapi && typeof syncStatuses.cliproxyapi === 'object' ? syncStatuses.cliproxyapi : {}
   const chatgptLocal = extra.chatgpt_local && typeof extra.chatgpt_local === 'object' ? extra.chatgpt_local : {}
-  return { ...account, extra, cpaSync, chatgptLocal }
+  return { ...account, extra, cpaSync, cliproxySync, chatgptLocal }
 }
 
 function formatSyncTime(value?: string) {
@@ -168,6 +169,64 @@ function LocalProbeSummary({ probe }: { probe: any }) {
   )
 }
 
+function cliproxyStateMeta(sync: any) {
+  if (!sync || Object.keys(sync).length === 0) {
+    return { color: 'default', label: '未同步' }
+  }
+  if (!sync.uploaded) {
+    return { color: 'default', label: '未发现' }
+  }
+  if (sync.remote_state === 'usable') {
+    return { color: 'success', label: '远端可用' }
+  }
+  if (sync.remote_state === 'access_token_invalidated') {
+    return { color: 'error', label: '远端AT失效' }
+  }
+  if (sync.remote_state === 'unauthorized') {
+    return { color: 'error', label: '远端未授权' }
+  }
+  if (sync.remote_state === 'payment_required') {
+    return { color: 'warning', label: '远端需付费/权限' }
+  }
+  if (sync.remote_state === 'quota_exhausted') {
+    return { color: 'warning', label: '远端额度耗尽' }
+  }
+  if (sync.status === 'active') {
+    return { color: 'processing', label: '远端Active' }
+  }
+  if (sync.status === 'refreshing') {
+    return { color: 'processing', label: '远端刷新中' }
+  }
+  if (sync.status === 'pending') {
+    return { color: 'default', label: '远端待处理' }
+  }
+  if (sync.status === 'error') {
+    return { color: 'error', label: '远端错误' }
+  }
+  if (sync.status === 'disabled') {
+    return { color: 'default', label: '远端禁用' }
+  }
+  return { color: 'default', label: '未同步' }
+}
+
+function CliproxySyncSummary({ sync }: { sync: any }) {
+  const meta = cliproxyStateMeta(sync)
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        <Tag color={meta.color}>{meta.label}</Tag>
+        {sync?.status ? <Tag>{`status: ${sync.status}`}</Tag> : null}
+        {sync?.status_message ? <Tag>{`message: ${sync.status_message}`}</Tag> : null}
+      </div>
+      {sync?.name ? <Text type="secondary">auth-file: {sync.name}</Text> : null}
+      {sync?.last_synced_at ? <Text type="secondary">同步时间: {formatSyncTime(sync.last_synced_at)}</Text> : null}
+      {sync?.last_refresh ? <Text type="secondary">远端刷新时间: {formatSyncTime(sync.last_refresh)}</Text> : null}
+      {sync?.next_retry_after ? <Text type="secondary">下次重试时间: {formatSyncTime(sync.next_retry_after)}</Text> : null}
+      {sync?.last_probe_message ? <Text type="secondary">探测信息: {sync.last_probe_message}</Text> : null}
+    </div>
+  )
+}
+
 function LogPanel({ taskId, onDone }: { taskId: string; onDone: () => void }) {
   const [lines, setLines] = useState<string[]>([])
   const [done, setDone] = useState(false)
@@ -254,6 +313,7 @@ function ActionMenu({ acc, onRefresh }: { acc: any; onRefresh: () => void }) {
   const [resultText, setResultText] = useState('')
   const [resultUrl, setResultUrl] = useState('')
   const [resultProbe, setResultProbe] = useState<any>(null)
+  const [resultCliproxySync, setResultCliproxySync] = useState<any>(null)
 
   useEffect(() => {
     apiFetch(`/actions/${acc.platform}`)
@@ -261,12 +321,13 @@ function ActionMenu({ acc, onRefresh }: { acc: any; onRefresh: () => void }) {
       .catch(() => {})
   }, [acc.platform])
 
-  const showResult = (title: string, status: 'success' | 'error', text: string, url = '', probe: any = null) => {
+  const showResult = (title: string, status: 'success' | 'error', text: string, url = '', probe: any = null, cliproxySync: any = null) => {
     setResultTitle(title)
     setResultStatus(status)
     setResultText(text)
     setResultUrl(url)
     setResultProbe(probe)
+    setResultCliproxySync(cliproxySync)
     setResultOpen(true)
   }
 
@@ -300,15 +361,18 @@ function ActionMenu({ acc, onRefresh }: { acc: any; onRefresh: () => void }) {
       } else {
         message.success(data.message || '操作成功')
         const probe = typeof data === 'object' && data ? data.probe || null : null
+        const cliproxySync = typeof data === 'object' && data ? data.sync || null : null
         const text =
           probe
+            ? String(data.message || '操作成功')
+            : cliproxySync
             ? String(data.message || '操作成功')
             : typeof data === 'string'
             ? data
             : Object.keys(data).length > 0
               ? JSON.stringify(data, null, 2)
               : '操作成功'
-        showResult(actionLabel, 'success', text, '', probe)
+        showResult(actionLabel, 'success', text, '', probe, cliproxySync)
       }
       onRefresh()
     } catch (e: any) {
@@ -369,6 +433,11 @@ function ActionMenu({ acc, onRefresh }: { acc: any; onRefresh: () => void }) {
         {resultProbe ? (
           <div style={{ marginBottom: 12 }}>
             <LocalProbeSummary probe={resultProbe} />
+          </div>
+        ) : null}
+        {resultCliproxySync ? (
+          <div style={{ marginBottom: 12 }}>
+            <CliproxySyncSummary sync={resultCliproxySync} />
           </div>
         ) : null}
         {resultUrl ? (
@@ -795,6 +864,19 @@ export default function Accounts() {
         },
       },
       {
+        title: 'CLIProxyAPI',
+        key: 'cliproxy_sync',
+        render: (_: any, record: any) => {
+          const sync = record.cliproxySync || {}
+          return renderProbeBlock(
+            cliproxyStateMeta(sync),
+            sync.last_synced_at || sync.last_probe_at,
+            sync.last_probe_message || sync.message,
+            180,
+          )
+        },
+      },
+      {
         title: 'CPA',
         key: 'cpa_sync',
         render: (_: any, record: any) => {
@@ -1035,6 +1117,16 @@ export default function Accounts() {
                   <LocalProbeSummary probe={currentAccount.chatgptLocal} />
                 ) : (
                   <Text type="secondary">尚未探测。可在操作菜单中点击“探测本地状态”。</Text>
+                )}
+              </div>
+            ) : null}
+            {currentPlatform === 'chatgpt' ? (
+              <div style={{ marginTop: 16, padding: 12, borderRadius: 8, border: '1px solid #e5e7eb', background: '#fafafa' }}>
+                <div style={{ marginBottom: 8, fontWeight: 600 }}>CLIProxyAPI 状态</div>
+                {currentAccount.cliproxySync && Object.keys(currentAccount.cliproxySync).length > 0 ? (
+                  <CliproxySyncSummary sync={currentAccount.cliproxySync} />
+                ) : (
+                  <Text type="secondary">尚未同步。可在操作菜单中点击“同步 CLIProxyAPI 状态”。</Text>
                 )}
               </div>
             ) : null}
