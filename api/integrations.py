@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
 from core.base_platform import Account, AccountStatus
-from core.db import AccountModel, engine
+from core.db import AccountModel, engine, get_session
 from services.external_apps import install, list_status, start, start_all, stop, stop_all
 from services.chatgpt_sync import has_cpa_upload_success, upload_account_model_to_cpa
 
@@ -146,3 +146,53 @@ def backfill_integrations(body: BackfillRequest):
             summary["total"] += 1
 
     return summary
+
+
+@router.post("/backfill-sub2api")
+def sub2api_backfill(req: BackfillRequest, session: Session = Depends(get_session)):
+    """批量补传到 Sub2API"""
+    from services.external_sync import sync_account
+    
+    results = {
+        "success": 0,
+        "failed": 0,
+        "skipped": 0,
+        "total": 0,
+        "items": []
+    }
+    
+    # 查询账号
+    if req.account_ids:
+        accounts = [session.get(AccountModel, aid) for aid in req.account_ids if session.get(AccountModel, aid)]
+    else:
+        stmt = select(AccountModel).where(AccountModel.platform.in_(req.platforms or ["chatgpt"]))
+        if req.pending_only:
+            # 只选择未上传到 sub2api 的账号
+            pass  # TODO: 添加过滤条件
+        if req.status:
+            stmt = stmt.where(AccountModel.status == req.status)
+        if req.email:
+            stmt = stmt.where(AccountModel.email.contains(req.email))
+        accounts = list(session.exec(stmt).all())
+    
+    results["total"] = len(accounts)
+    
+    for acc in accounts:
+        try:
+            sync_results = sync_account(acc)
+            sub2api_result = next((r for r in sync_results if r.get("name") == "Sub2API"), None)
+            
+            if sub2api_result and sub2api_result.get("ok"):
+                results["success"] += 1
+                results["items"].append({"id": acc.id, "email": acc.email, "status": "success", "msg": sub2api_result.get("msg")})
+            elif sub2api_result:
+                results["skipped"] += 1
+                results["items"].append({"id": acc.id, "email": acc.email, "status": "skipped", "msg": sub2api_result.get("msg")})
+            else:
+                results["failed"] += 1
+                results["items"].append({"id": acc.id, "email": acc.email, "status": "failed", "msg": "No Sub2API result"})
+        except Exception as e:
+            results["failed"] += 1
+            results["items"].append({"id": acc.id, "email": acc.email, "status": "failed", "msg": str(e)})
+    
+    return results
