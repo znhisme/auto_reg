@@ -85,6 +85,17 @@ export default function RegisterTaskPage() {
         luckmail_api_key: cfg.luckmail_api_key || '',
         luckmail_email_type: cfg.luckmail_email_type || '',
         luckmail_domain: cfg.luckmail_domain || '',
+        // 自动上传配置
+        cpa_api_url: cfg.cpa_api_url || '',
+        cpa_api_key: cfg.cpa_api_key || '',
+        sub2api_api_url: cfg.sub2api_api_url || '',
+        sub2api_api_key: cfg.sub2api_api_key || '',
+        sub2api_group_ids: cfg.sub2api_group_ids || '',
+        codex_proxy_url: cfg.codex_proxy_url || '',
+        codex_proxy_key: cfg.codex_proxy_key || '',
+        codex_proxy_upload_type: cfg.codex_proxy_upload_type || 'at',
+        team_manager_url: cfg.team_manager_url || '',
+        team_manager_key: cfg.team_manager_key || '',
       })
     })
   }, [form])
@@ -137,6 +148,17 @@ export default function RegisterTaskPage() {
       luckmail_domain: values.luckmail_domain,
       yescaptcha_key: values.yescaptcha_key,
       solver_url: values.solver_url,
+      // 自动上传配置
+      cpa_api_url: values.cpa_api_url,
+      cpa_api_key: values.cpa_api_key,
+      sub2api_api_url: values.sub2api_api_url,
+      sub2api_api_key: values.sub2api_api_key,
+      sub2api_group_ids: values.sub2api_group_ids,
+      codex_proxy_url: values.codex_proxy_url,
+      codex_proxy_key: values.codex_proxy_key,
+      codex_proxy_upload_type: values.codex_proxy_upload_type,
+      team_manager_url: values.team_manager_url,
+      team_manager_key: values.team_manager_key,
     }
     const chatgptRegistrationRequestAdapter =
       buildChatGPTRegistrationRequestAdapter(
@@ -443,6 +465,53 @@ export default function RegisterTaskPage() {
             </Form.Item>
             <Form.Item name="smstome_sync_max_pages_per_country" label="每国同步页数">
               <Input placeholder="5" />
+            </Form.Item>
+          </Card>
+        )}
+
+        {platform === 'chatgpt' && (
+          <Card title="自动上传配置" style={{ marginBottom: 16 }}>
+            <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
+              注册成功后自动上传到外部管理平台（留空则不上传）
+            </Text>
+
+            <Form.Item name="cpa_api_url" label="CPA API URL">
+              <Input placeholder="https://your-cpa.example.com" />
+            </Form.Item>
+            <Form.Item name="cpa_api_key" label="CPA API Key">
+              <Input.Password placeholder="Bearer token" />
+            </Form.Item>
+
+            <Form.Item name="sub2api_api_url" label="Sub2API API URL">
+              <Input placeholder="https://your-sub2api.example.com" />
+            </Form.Item>
+            <Form.Item name="sub2api_api_key" label="Sub2API API Key">
+              <Input.Password placeholder="API Key" />
+            </Form.Item>
+            <Form.Item name="sub2api_group_ids" label="Sub2API 分组 ID">
+              <Input placeholder="多个分组用逗号分隔，例如 2,4,8" />
+            </Form.Item>
+
+            <Form.Item name="codex_proxy_url" label="CodexProxy API URL">
+              <Input placeholder="https://your-codex-proxy.example.com" />
+            </Form.Item>
+            <Form.Item name="codex_proxy_key" label="CodexProxy Admin Key">
+              <Input.Password placeholder="Admin Key" />
+            </Form.Item>
+            <Form.Item name="codex_proxy_upload_type" label="CodexProxy 上传类型">
+              <Select
+                options={[
+                  { value: 'at', label: 'AT (Access Token, 推荐)' },
+                  { value: 'rt', label: 'RT (Refresh Token)' },
+                ]}
+              />
+            </Form.Item>
+
+            <Form.Item name="team_manager_url" label="Team Manager API URL">
+              <Input placeholder="https://your-tm.example.com" />
+            </Form.Item>
+            <Form.Item name="team_manager_key" label="Team Manager API Key">
+              <Input.Password placeholder="API Key" />
             </Form.Item>
           </Card>
         )}
