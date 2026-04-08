@@ -23,7 +23,7 @@ const SELECT_FIELDS: Record<string, { label: string; value: string }[]> = {
     { label: 'TempMail.lol（自动生成）', value: 'tempmail_lol' },
     { label: 'SkyMail（CloudMail 接口）', value: 'skymail' },
     { label: 'DuckMail（自动生成）', value: 'duckmail' },
-    { label: 'MoeMail (sall.cc)', value: 'moemail' },
+    { label: 'MoeMail (mail.feedpoly.asia)', value: 'moemail' },
     { label: 'YYDS Mail / MaliAPI', value: 'maliapi' },
     { label: 'GPTMail', value: 'gptmail' },
     { label: 'OpenTrashMail', value: 'opentrashmail' },
@@ -104,7 +104,7 @@ const TAB_ITEMS = [
         provider: 'moemail',
         desc: '自动注册账号并生成临时邮箱',
         fields: [
-          { key: 'moemail_api_url', label: 'API URL', placeholder: 'https://sall.cc' },
+          { key: 'moemail_api_url', label: 'API URL', placeholder: 'https://mail.feedpoly.asia' },
           { key: 'moemail_api_key', label: 'API Key', secret: true },
         ],
       },

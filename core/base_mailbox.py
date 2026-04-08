@@ -244,7 +244,7 @@ def create_mailbox(
         )
     elif provider == "moemail":
         return MoeMailMailbox(
-            api_url=extra.get("moemail_api_url", "https://sall.cc"),
+            api_url=extra.get("moemail_api_url", "https://mail.feedpoly.asia"),
             api_key=extra.get("moemail_api_key", ""),
             proxy=proxy,
         )
@@ -1915,10 +1915,10 @@ class CFWorkerMailbox(BaseMailbox):
 
 
 class MoeMailMailbox(BaseMailbox):
-    """MoeMail (sall.cc) 邮箱服务 - 自动注册账号并生成临时邮箱"""
+    """MoeMail (mail.feedpoly.asia) 邮箱服务 - 自动注册账号并生成临时邮箱"""
 
     def __init__(
-        self, api_url: str = "https://sall.cc", api_key: str = "", proxy: str = None
+        self, api_url: str = "https://mail.feedpoly.asia", api_key: str = "", proxy: str = None
     ):
         self.api = api_url.rstrip("/")
         self.api_key = str(api_key or "").strip()
@@ -1979,14 +1979,14 @@ class MoeMailMailbox(BaseMailbox):
 
         name = "".join(random.choices(string.ascii_letters + string.digits, k=8))
         # 获取可用域名列表，随机选一个
-        domain = "sall.cc"
+        domain = "mail.feedpoly.asia"
         try:
             cfg_r = self._session.get(
                 f"{self.api}/api/config", headers=self._api_headers(), timeout=10
             )
             domains = [
                 d.strip()
-                for d in cfg_r.json().get("emailDomains", "sall.cc").split(",")
+                for d in cfg_r.json().get("emailDomains", "mail.feedpoly.asia").split(",")
                 if d.strip()
             ]
             if domains:

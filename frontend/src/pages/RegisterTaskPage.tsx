@@ -293,7 +293,7 @@ export default function RegisterTaskPage() {
             <Select
               options={[
                 { value: 'luckmail', label: 'LuckMail' },
-                { value: 'moemail', label: 'MoeMail (sall.cc)' },
+                { value: 'moemail', label: 'MoeMail (mail.feedpoly.asia)' },
                 { value: 'tempmail_lol', label: 'TempMail.lol' },
                 { value: 'skymail', label: 'SkyMail (CloudMail)' },
                 { value: 'maliapi', label: 'YYDS Mail / MaliAPI' },
